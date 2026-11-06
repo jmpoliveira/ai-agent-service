@@ -1,0 +1,88 @@
+# Standalone stack: the agent plus its own Ollama and Jaeger. The MCP server runs on the host.
+#   docker compose --profile standalone up -d --build     (make up)
+# Ollama and Jaeger sit in the "standalone" profile, so they do not start when the agent joins
+# the shared docker-env stack, which already runs both:
+#   docker compose -f docker-compose.yml -f docker-compose.docker-env.yml up -d --build   (make up-env)
+name: ai-agent-service
+
+services:
+  agent:
+    build:
+      context: .
+    image: ai-agent-service:latest
+    container_name: ai-agent-service
+    env_file:
+      - .env # API keys, model names, limits
+    environment: # overrides .env: inside the stack, services are reached by name
+      HTTP_HOST: 0.0.0.0
+      APP_ENV: ${APP_ENV:-development}
+      OLLAMA_BASE_URL: http://ollama:11434
+      MCP_SERVER_URL: http://host.docker.internal:3000/mcp
+      MCP_HEALTH_URL: http://host.docker.internal:3000/health
+      OTEL_ENABLED: "true"
+      OTEL_EXPORTER_ENDPOINT: http://jaeger:4318
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # needed on Linux; built in on Docker Desktop
+    ports:
+      - "8000:8000"
+    depends_on:
+      # required: false lets the agent start without these services (docker-env mode).
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
+      jaeger:
+        condition: service_started
+        required: false
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.40.12
+    profiles: [standalone]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama # models survive container rebuilds
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # NVIDIA GPU (needs the NVIDIA Container Toolkit); without it Ollama runs on the CPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # One-shot job: downloads OLLAMA_MODEL (from .env) before the agent starts. Fast once cached.
+  ollama-pull:
+    image: ollama/ollama:0.40.12
+    profiles: [standalone]
+    entrypoint: ["ollama", "pull", "${OLLAMA_MODEL:-qwen3:8b}"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434 # the CLI talks to the ollama service, not to itself
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  jaeger:
+    image: jaegertracing/jaeger:2.23.0
+    profiles: [standalone]
+    # Jaeger v2 binds OTLP to localhost by default, unreachable from other containers.
+    command:
+      - --set=receivers.otlp.protocols.http.endpoint=0.0.0.0:4318
+      - --set=receivers.otlp.protocols.grpc.endpoint=0.0.0.0:4317
+    ports:
+      - "16686:16686" # UI
+      - "4318:4318" # OTLP over HTTP (what this service uses)
+    restart: unless-stopped
+
+volumes:
+  ollama-models:

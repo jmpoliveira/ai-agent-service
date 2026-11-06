@@ -1,0 +1,107 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-agent-service"
+version = "0.1.0"
+description = "Provider-agnostic AI agent service (Ollama, Gemini, Claude) with tool calling over MCP, built to grow with RAG, evals and observability."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+  # API
+  "fastapi>=0.162,<1",
+  "uvicorn>=0.54,<1",
+  "pydantic-settings>=2.16,<3",
+  "httpx>=0.28,<1",
+  # Tool server (MCP). Same major as the mcp-server project: 2.x renames the client API.
+  "mcp>=1.9,<2",
+  # LLM providers: official LangChain partner packages plus the SDKs whose errors we handle
+  "langchain-core>=1.7,<2",
+  "langchain-ollama>=1.1,<2",
+  "langchain-google-genai>=4.4,<5",
+  "langchain-anthropic>=1.7,<2",
+  "ollama>=0.6,<1",
+  "anthropic>=2.5,<3",
+  "google-genai>=2.34,<3",
+  # Observability
+  "opentelemetry-api>=1.45,<2",
+  "opentelemetry-sdk>=1.45,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.45,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9,<10",
+  "pytest-asyncio>=1.4,<2",
+  "pytest-cov>=7,<8",
+  "ruff>=0.17,<1",
+  "pyright>=1.1.414,<2",
+]
+
+[tool.setuptools.packages.find]
+include = ["src*", "config*"]
+
+# Read at runtime through importlib.resources; without this the wheel (and the Docker image) misses it.
+[tool.setuptools.package-data]
+config = ["logging.json"]
+
+# ---------------------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-markers"
+markers = [
+  "integration: starts a real in-process MCP server on a local port (no external services)",
+]
+
+[tool.coverage.run]
+source = ["src", "config"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+
+# ---------------------------------------------------------------------------------------
+# ruff
+# ---------------------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",  # pycodestyle + pyflakes
+  "I",            # import sorting
+  "B",            # bugbear
+  "UP",           # pyupgrade
+  "ASYNC",        # async best practices
+  "S",            # security (bandit)
+  "BLE",          # blind except
+  "C4",           # comprehensions
+  "SIM",          # simplifications
+  "PT",           # pytest style
+  "RUF",          # ruff-specific
+  "PLW",          # pylint warnings (global statement...)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]  # assert and dummy secrets are fine in tests
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------------------------------------------------------------------------------------
+# pyright
+# ---------------------------------------------------------------------------------------
+[tool.pyright]
+include = ["src", "config", "main.py", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
