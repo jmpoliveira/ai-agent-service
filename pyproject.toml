@@ -17,7 +17,7 @@ dependencies = [
   "pydantic-settings>=2.16,<3",
   "httpx>=0.28,<1",
   # Tool server (MCP). Same major as the mcp-server project: 2.x renames the client API.
-  "mcp>=1.9,<2",
+  "mcp>=1.9,<3",
   # LLM providers: official LangChain partner packages plus the SDKs whose errors we handle
   "langchain-core>=1.7,<2",
   "langchain-ollama>=1.1,<2",
