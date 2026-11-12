@@ -1,0 +1,57 @@
+{
+  "base": {
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {
+      "json": {
+        "()": "config.log_setup.JsonFormatter"
+      },
+      "console": {
+        "()": "config.log_setup.ConsoleFormatter",
+        "fmt": "%(asctime)s %(levelname)-8s %(name)s [trace_id=%(trace_id)s span_id=%(span_id)s] %(message)s"
+      }
+    },
+    "filters": {
+      "trace_context": {
+        "()": "config.log_setup.TraceContextFilter"
+      }
+    },
+    "handlers": {
+      "stdout": {
+        "class": "logging.StreamHandler",
+        "stream": "ext://sys.stdout",
+        "formatter": "json",
+        "filters": ["trace_context"]
+      }
+    },
+    "loggers": {
+      "httpx": { "level": "WARNING" },
+      "httpcore": { "level": "WARNING" }
+    },
+    "root": {
+      "level": "INFO",
+      "handlers": ["stdout"]
+    }
+  },
+  "profiles": {
+    "development": {
+      "handlers": {
+        "stdout": { "formatter": "console" }
+      },
+      "loggers": {
+        "src": { "level": "DEBUG" },
+        "config": { "level": "DEBUG" },
+        "__main__": { "level": "DEBUG" }
+      }
+    },
+    "test": {
+      "handlers": {
+        "stdout": { "formatter": "console" }
+      },
+      "root": { "level": "WARNING" }
+    },
+    "production": {
+      "root": { "level": "INFO" }
+    }
+  }
+}

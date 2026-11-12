@@ -1,0 +1,19 @@
+# Override for the shared docker-env stack (network docker-env-net: ollama, chromadb, jaeger).
+# Start docker-env and the mcp-server first, then:
+#   docker compose -f docker-compose.yml -f docker-compose.docker-env.yml up -d --build
+# Inside the network, services are reached by name, so these values replace the host ones.
+services:
+  agent:
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      MCP_SERVER_URL: http://mcp-server:3000/mcp # use the mcp-server container name
+      MCP_HEALTH_URL: http://mcp-server:3000/health
+      OTEL_ENABLED: "true"
+      OTEL_EXPORTER_ENDPOINT: http://jaeger:4318
+    networks:
+      - shared
+
+networks:
+  shared:
+    name: docker-env-net
+    external: true # created by the docker-env project, not by this one

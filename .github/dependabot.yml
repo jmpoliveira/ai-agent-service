@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # mcp 2.x renames the client API (see docs/adr/0001-architecture.md); upgrade on purpose.
+      - dependency-name: mcp
+        update-types: ["version-update:semver-major"]
+    groups:
+      langchain:
+        patterns: ["langchain-*"]
+      opentelemetry:
+        patterns: ["opentelemetry-*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
