@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
+authors = [{ name = "jmpoliveira" }]
 dependencies = [
   # API
   "fastapi>=0.162,<1",
@@ -31,6 +32,10 @@ dependencies = [
   "opentelemetry-sdk>=1.45,<2",
   "opentelemetry-exporter-otlp-proto-http>=1.45,<2",
 ]
+
+[project.urls]
+Repository = "https://github.com/jmpoliveira/ai-agent-service"
+Issues = "https://github.com/jmpoliveira/ai-agent-service/issues"
 
 [project.optional-dependencies]
 dev = [

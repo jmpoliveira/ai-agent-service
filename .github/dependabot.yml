@@ -6,8 +6,10 @@ updates:
       interval: weekly
     ignore:
       # mcp 2.x renames the client API (see docs/adr/0001-architecture.md); upgrade on purpose.
+      # An explicit version range, not update-types: without a lockfile Dependabot cannot tell
+      # the current version of a ">=1.9,<2" requirement, so a semver-major rule is not applied.
       - dependency-name: mcp
-        update-types: ["version-update:semver-major"]
+        versions: [">=2"]
     groups:
       langchain:
         patterns: ["langchain-*"]

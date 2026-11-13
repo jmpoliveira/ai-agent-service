@@ -1,5 +1,9 @@
 # ai-agent-service
 
+[![CI](https://github.com/jmpoliveira/ai-agent-service/actions/workflows/ci.yml/badge.svg)](https://github.com/jmpoliveira/ai-agent-service/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A provider-agnostic AI agent service. It answers a prompt by looping between an LLM
 (**Ollama**, **Gemini** or **Claude**) and the tools of an **MCP server**, and every step of
 the loop is traced end to end with **OpenTelemetry** (viewable in Jaeger).
@@ -24,15 +28,24 @@ server, the RAG ingestion pipeline) lives in its own repository. See
 4. The loop always ends: final answer, `max_steps`, token budget, time budget, or the model
    repeating the same call. The response says which one (`stop_reason`).
 
-The expected trace in Jaeger (client and server spans share one trace id):
+A real run in Jaeger (`qwen3:8b` on Ollama, the companion mcp-server in Docker). One trace id
+covers the HTTP request, the agent loop and the MCP server spans:
+
+![Jaeger trace of one agent run: invoke_agent with tool.list, two chat calls to qwen3:8b and execute_tool search_customers, each linked to its mcp-server span](docs/images/jaeger-trace.png)
+
+The same trace as text:
 
 ```
-invoke_agent ai-agent-service
-├── tool.list                         → tools/list                  (mcp-server)
-├── chat <model>
-├── execute_tool search_customers     → tools/call search_customers (mcp-server)
-└── chat <model>
+POST /v1/agent/runs                   (FastAPI HTTP span)
+└── invoke_agent ai-agent-service
+    ├── tool.list                     → tools/list                  (mcp-server)
+    ├── chat qwen3:8b                 the model asks for a tool
+    ├── execute_tool search_customers → tools/call search_customers (mcp-server)
+    └── chat qwen3:8b                 the model writes the answer
 ```
+
+In this run the two model calls take about 57 of the 57.3 seconds, while listing and calling the
+tools takes about 40 milliseconds: model latency, not tool access, is what to optimise.
 
 ## Architecture
 
@@ -52,7 +65,9 @@ The reasoning is in [docs/adr](docs/adr).
 
 ## Quick start
 
-Requirements: Python 3.12+, a running MCP server, and at least one LLM provider.
+Requirements: Python 3.12+, a running MCP server (for example the companion
+[mcp-server](https://github.com/jmpoliveira/mcp-server), which serves mock customer and
+ticket tools), and at least one LLM provider.
 
 ```bash
 make install
@@ -71,7 +86,7 @@ Ask the agent something:
 ```bash
 curl -sS -X POST http://localhost:8000/v1/agent/runs \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Which open tickets does Ada Lovelace have?", "provider": "ollama"}'
+  -d '{"prompt": "Which open tickets does the customer Bruno Costa have?", "provider": "ollama"}'
 ```
 
 ```json

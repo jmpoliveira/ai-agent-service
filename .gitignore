@@ -26,3 +26,6 @@ htmlcov/
 
 # Logs
 logs/
+
+# Obsidian
+.obsidian/
