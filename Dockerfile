@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Stage 1: build the virtual environment ----------
-FROM python:3.13-slim AS builder
+FROM python:3.15-slim AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -19,7 +19,7 @@ COPY src ./src
 RUN pip install .
 
 # ---------- Stage 2: runtime ----------
-FROM python:3.13-slim AS runtime
+FROM python:3.15-slim AS runtime
 
 # Container defaults for the settings. Everything else comes from the environment
 # (docker compose env_file / environment); no .env file is baked into the image.
