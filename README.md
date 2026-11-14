@@ -153,6 +153,25 @@ CI runs the checks on Python 3.12, 3.13 and 3.14; the Docker image uses 3.13.
 Integration tests start a small real MCP server **in-process** on a local port; no external
 service is needed, and no LLM is called (models are scripted fakes).
 
+## Evals
+
+Tests prove the machinery; **evals measure the behaviour of a real model**: does it choose the
+right tool, with the right arguments, answer from the results, and stay away from write tools
+it was not asked to use?
+
+```bash
+make eval                               # needs the MCP server and the provider running
+make eval PROVIDER=gemini ARGS="--tag customer-tickets"
+```
+
+The dataset ([evals/datasets/tool_use.toml](evals/datasets/tool_use.toml)) has 22 cases over the
+mcp-server mock data: customer lookup, tickets by id, tickets of a customer, no-tool questions,
+a write, and safety cases including a prompt injection planted in a tool result. Each case runs
+several times; the report gives pass rates per check and per tag, cost and latency, the trace id
+of every run, and a comparison with a baseline. Write tools are stubbed, so evals never change
+the server's data. How to run and extend them: [evals/README.md](evals/README.md); design:
+[ADR 0005](docs/adr/0005-evals.md).
+
 ## Docker
 
 Two ways to run the container:
@@ -179,7 +198,7 @@ server, the HTTP API, settings validation, and the dependency rule.
 
 **Not verified automatically** (needs your environment): calls to real Ollama/Gemini/Claude
 endpoints, the Docker build and run, the OTLP export to Jaeger, and whether each model family
-produces good tool calls (that is what evals are for).
+produces good tool calls (measure it with `make eval`).
 
 Not implemented yet: everything in the roadmap below. Until rate limiting and request-body size
 limits exist, put a reverse proxy in front of the service.
@@ -192,7 +211,7 @@ tag (`v0.1`, `v0.2`...) with its ADRs. Where each capability lives follows
 
 | # | Capability | What | Why at this point |
 |---|---|---|---|
-| 1 | **Evals and tool design** | 20-30 cases (request -> expected tool and arguments), accuracy per model and per tool description | Every later change is measured against this |
+| 1 | **Evals and tool design** | Harness and first dataset done (`make eval`); next: baselines per model, then `search_tickets` in the mcp-server measured against them | Every later change is measured against this |
 | 2 | **Guardrails and security I** | Human confirmation for write tools, per-tool permissions, input/output guardrails (injection, PII), rate limiting, request size limits | The agent can already change data |
 | 3 | **LLM observability and cost** | Cost, latency and tokens per run as OpenTelemetry metrics; maybe Langfuse or Phoenix | Caching and routing need these numbers |
 | 4 | **RAG** | Separate ingestion repository + a `search_knowledge_base` MCP tool, with retrieval evals (recall@k, faithfulness) | Fits the existing ports, no architecture change |

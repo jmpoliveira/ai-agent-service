@@ -83,6 +83,19 @@ def test_config_does_not_depend_on_the_application_layers():
     assert offenders == []
 
 
+def test_the_service_never_depends_on_the_evals():
+    # The evals test the service; the service (and its Docker image) must not need them.
+    offenders = [
+        f"{p.relative_to(ROOT)}: {m}"
+        for folder in ("src", "config")
+        for p in sorted((ROOT / folder).rglob("*.py"))
+        for m in _imports(p)
+        if m.split(".")[0] == "evals"
+    ]
+    offenders += [f"main.py: {m}" for m in _imports(ROOT / "main.py") if m.startswith("evals")]
+    assert offenders == []
+
+
 def test_the_guard_actually_detects_a_violation(tmp_path: Path):
     # Arrange: prove the checker is not vacuously green
     bad = tmp_path / "bad.py"

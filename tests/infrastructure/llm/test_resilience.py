@@ -11,7 +11,12 @@ from src.domain.errors import (
 )
 from src.domain.llm import ChatResult
 from src.domain.messages import Message
-from src.infrastructure.llm.resilience import FallbackChatModel, RetryingChatModel, RetryPolicy
+from src.infrastructure.llm.resilience import (
+    FallbackChatModel,
+    RateLimitedChatModel,
+    RetryingChatModel,
+    RetryPolicy,
+)
 from tests.fakes import ScriptedChatModel, reply
 
 MESSAGES = [Message.user("hi")]
@@ -202,3 +207,71 @@ def test_fallback_model_identifies_as_the_primary():
     primary = ScriptedChatModel([], provider="gemini", model="g1")
     model = FallbackChatModel(primary, [ScriptedChatModel([], provider="ollama")])
     assert (model.provider, model.model) == ("gemini", "g1")
+
+
+class FakeTime:
+    """A clock that only moves when the code under test sleeps."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def _limited(limit: int, replies: int, fake: FakeTime) -> RateLimitedChatModel:
+    inner = ScriptedChatModel([reply(f"r{i}") for i in range(replies)])
+    return RateLimitedChatModel(inner, limit, clock=fake.clock, sleep=fake.sleep)
+
+
+async def test_requests_under_the_limit_do_not_wait():
+    fake = FakeTime()
+    model = _limited(3, 3, fake)
+
+    for _ in range(3):
+        await model.chat(MESSAGES, [])
+
+    assert fake.sleeps == []
+
+
+async def test_the_request_over_the_limit_waits_until_the_oldest_leaves_the_window():
+    # Arrange: 2 per minute; the first two go at t=0 and t=10.
+    fake = FakeTime()
+    model = _limited(2, 3, fake)
+    await model.chat(MESSAGES, [])
+    fake.now = 10.0
+    await model.chat(MESSAGES, [])
+    fake.now = 20.0
+
+    # Act
+    result = await model.chat(MESSAGES, [])
+
+    # Assert: it waits until t=60, when the t=0 request is a minute old.
+    assert fake.sleeps == [40.0]
+    assert result.message.content == "r2"
+
+
+async def test_old_requests_leave_the_window():
+    fake = FakeTime()
+    model = _limited(1, 2, fake)
+    await model.chat(MESSAGES, [])
+    fake.now = 61.0
+
+    await model.chat(MESSAGES, [])
+
+    assert fake.sleeps == []
+
+
+async def test_rate_limiter_exposes_the_inner_identity_and_validates_the_limit():
+    inner = ScriptedChatModel([])
+
+    model = RateLimitedChatModel(inner, 5)
+
+    assert (model.provider, model.model) == (inner.provider, inner.model)
+    with pytest.raises(ValueError, match="at least 1"):
+        RateLimitedChatModel(inner, 0)

@@ -10,7 +10,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from config.settings import Settings
-from main import build_chat_models, build_health_checks, build_run_agent, create_app
+from main import (
+    build_chat_models,
+    build_health_checks,
+    build_run_agent,
+    build_tool_provider,
+    create_app,
+)
 from src.infrastructure.llm.resilience import FallbackChatModel, RetryingChatModel
 
 
@@ -121,3 +127,14 @@ def test_documentation_is_hidden_in_production():
 
     with TestClient(app) as client:
         assert client.get("/docs").status_code == 404
+
+
+def test_build_run_agent_reuses_given_models_and_tool_provider():
+    # The evals pass already built models and a wrapped tool provider.
+    models = build_chat_models(_settings())
+    tools = build_tool_provider(_settings())
+
+    agent = build_run_agent(_settings(), models=models, tools=tools)
+
+    assert agent._tools is tools  # pyright: ignore[reportPrivateUsage]
+    assert agent._catalog.get("ollama") is models["ollama"]  # pyright: ignore[reportPrivateUsage]

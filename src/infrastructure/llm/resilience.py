@@ -1,8 +1,8 @@
 """Decorators that add resilience to any ``ChatModel``.
 
-Retry and fallback live here, not inside the provider adapters, so the policy is written
-and tested once. Only errors that can heal themselves are retried: an authentication or
-validation error would fail again, so it is raised immediately.
+Retry, fallback and rate limiting live here, not inside the provider adapters, so each policy
+is written and tested once. Only errors that can heal themselves are retried: an
+authentication or validation error would fail again, so it is raised immediately.
 """
 
 from __future__ import annotations
@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
@@ -142,3 +144,65 @@ class FallbackChatModel:
                     {"from_provider": candidate.provider, "to_provider": following.provider},
                 )
         return await self._candidates[-1].chat(messages, tools)
+
+
+class RateLimitedChatModel:
+    """Keeps requests under a provider quota by waiting, instead of failing with 429.
+
+    A sliding window of the last minute: when it already holds ``max_requests_per_minute``
+    requests, the next one waits until the oldest leaves the window. Waiting is better than
+    retrying here: a rate-limit error would usually come with a Retry-After longer than the
+    retry policy accepts, so the request would fail anyway.
+
+    The window is per instance, so it only protects requests that share this object. That is
+    enough for one process (the evals, or one service replica); several replicas share a
+    provider quota and would need a shared limiter.
+    """
+
+    _WINDOW_SECONDS = 60.0
+
+    def __init__(
+        self,
+        inner: ChatModel,
+        max_requests_per_minute: int,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        if max_requests_per_minute < 1:
+            raise ValueError("max_requests_per_minute must be at least 1")
+        self._inner = inner
+        self._limit = max_requests_per_minute
+        self._clock = clock
+        self._sleep = sleep
+        self._sent: deque[float] = deque()
+        # Serialises the bookkeeping, so concurrent callers cannot both take the last slot.
+        self._lock = asyncio.Lock()
+
+    @property
+    def provider(self) -> str:
+        return self._inner.provider
+
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    async def chat(self, messages: Sequence[Message], tools: Sequence[ToolSpec]) -> ChatResult:
+        async with self._lock:
+            await self._wait_for_slot()
+            self._sent.append(self._clock())
+        return await self._inner.chat(messages, tools)
+
+    async def _wait_for_slot(self) -> None:
+        while True:
+            now = self._clock()
+            while self._sent and now - self._sent[0] >= self._WINDOW_SECONDS:
+                self._sent.popleft()
+            if len(self._sent) < self._limit:
+                return
+            wait = self._WINDOW_SECONDS - (now - self._sent[0])
+            logger.info(
+                "Waiting for the request rate limit",
+                extra={"provider": self.provider, "wait_seconds": round(wait, 1)},
+            )
+            await self._sleep(wait)

@@ -7,6 +7,7 @@ server at the factory: ``uvicorn main:create_app --factory``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 import uvicorn
 from fastapi import FastAPI
@@ -16,7 +17,7 @@ from config.settings import Settings, get_settings
 from config.telemetry import setup_telemetry
 from src.application.catalog import ModelCatalog
 from src.application.conversation_log import ConversationLogger
-from src.application.ports import ChatModel, HealthCheck
+from src.application.ports import ChatModel, HealthCheck, ToolGatewayProvider
 from src.application.run_agent import AgentConfig, RunAgent
 from src.domain.agent import AgentBudget
 from src.infrastructure.health.http_check import HttpHealthCheck
@@ -82,13 +83,27 @@ def build_chat_models(settings: Settings) -> dict[str, ChatModel]:
     return models
 
 
-def build_run_agent(settings: Settings) -> RunAgent:
-    catalog = ModelCatalog(build_chat_models(settings), default=settings.default_provider)
-    tools = McpToolGatewayProvider(
+def build_tool_provider(settings: Settings) -> ToolGatewayProvider:
+    return McpToolGatewayProvider(
         str(settings.mcp_server_url),
         connect_timeout_seconds=settings.mcp_connect_timeout_seconds,
         tool_timeout_seconds=settings.mcp_tool_timeout_seconds,
     )
+
+
+def build_run_agent(
+    settings: Settings,
+    *,
+    models: Mapping[str, ChatModel] | None = None,
+    tools: ToolGatewayProvider | None = None,
+) -> RunAgent:
+    """Wire the agent use case. ``models`` and ``tools`` let other entry points (the evals)
+    reuse already built models or wrap the tool provider; the service passes neither."""
+    catalog = ModelCatalog(
+        build_chat_models(settings) if models is None else models,
+        default=settings.default_provider,
+    )
+    tools = build_tool_provider(settings) if tools is None else tools
     allowlist = settings.agent_tool_allowlist
     config = AgentConfig(
         name=settings.agent_name,

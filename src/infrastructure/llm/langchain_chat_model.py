@@ -70,11 +70,13 @@ class LangChainChatModel:
             else:
                 reply = await self._client.ainvoke(lc_messages)
         except self._handled_errors as err:
+            # One line at WARNING is enough to see what failed and where (trace_id); the
+            # SDK traceback is long and only useful when debugging the adapter itself.
             logger.warning(
                 "LLM request failed",
                 extra={"provider": self._provider, "error_type": type(err).__name__},
-                exc_info=True,
             )
+            logger.debug("LLM request failure details", exc_info=True)
             raise translate_llm_error(err, self._provider) from err
 
         return from_ai_message(
