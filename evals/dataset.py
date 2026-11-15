@@ -8,6 +8,7 @@ an error, not an expectation that is silently never checked.
 from __future__ import annotations
 
 import hashlib
+import json
 import tomllib
 from pathlib import Path
 from typing import Any, Self, cast
@@ -113,7 +114,7 @@ class Dataset(_Strict):
     # mapped to the canned result the model receives instead.
     stub_tools: dict[str, str] = Field(default_factory=dict)
     cases: tuple[Case, ...] = Field(min_length=1)
-    # sha256 of the file, so a report always says exactly which dataset produced it.
+    # Hash of the graded content, so a report always says exactly which rules scored it.
     fingerprint: str = ""
 
     @model_validator(mode="after")
@@ -175,8 +176,16 @@ def load_dataset(path: Path) -> Dataset:
         data = tomllib.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as err:
         raise DatasetError(f"dataset {path} is not valid TOML: {err}") from err
-    data["fingerprint"] = hashlib.sha256(raw).hexdigest()[:12]
     try:
-        return Dataset.model_validate(data)
+        dataset = Dataset.model_validate(data)
     except ValidationError as err:
         raise DatasetError(f"dataset {path} is invalid:\n{err}") from err
+    return dataset.model_copy(update={"fingerprint": _fingerprint(dataset)})
+
+
+def _fingerprint(dataset: Dataset) -> str:
+    """A hash of what is graded (cases, expectations, defaults, stubs), not of the file bytes:
+    comments, spacing and key order do not change the results, so they must not change it."""
+    content = dataset.model_dump(mode="json", exclude={"fingerprint"})
+    canonical = json.dumps(content, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]

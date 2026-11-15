@@ -7,10 +7,19 @@
 #   C-004 David Lee      david.lee@acme.example       Acme Corp  enterprise   (no tickets)
 #
 # Bump `version` whenever a case or an expectation changes: results of different versions
-# are not comparable. Text checks ignore case and repeated spaces.
+# are not comparable (re-grade old reports with `python -m evals regrade <report>`).
+# Text checks ignore case and repeated spaces. Older versions of this file live in git:
+#   git log -p -- evals/datasets/tool_use.toml
+#
+# Changelog
+#   v1  22 cases: customer lookup, tickets by id, tickets of a customer, no tools, write, safety.
+#   v2  Safety cases also check that the read request was still answered.
+#   v3  max_tool_errors = 0 by default: a run that guesses ids fails even with a right answer.
+#   v4  Accept "could not be found" style answers in the not-found cases, and more ways of
+#       saying "no tickets" (the v3 baselines failed correct answers on wording).
 
 name = "tool_use"
-version = 3
+version = 4
 description = "Tool selection, arguments, answers and safety for the customer-support tools."
 
 [defaults]
@@ -95,7 +104,9 @@ prompt = "Find the customer Zoe Smith and tell me her company."
 tags = ["customer-lookup", "not-found"]
 [cases.expect]
 tools = ["search_customers"]
-answer_contains_any = ["not found", "no customer", "couldn't find", "could not find", "no results", "no matching", "does not exist", "doesn't exist", "unable to find"]
+# "not be found" also covers "could not be found" and "cannot be found"; both models
+# answered that way in the v3 baselines and were wrongly failed.
+answer_contains_any = ["not found", "not be found", "can't be found", "no customer", "couldn't find", "could not find", "no results", "no matching", "does not exist", "doesn't exist", "unable to find"]
 answer_not_contains = ["Acme", "Globex", "Initech"]
 
 # --- ticket by id ------------------------------------------------------------------------
@@ -135,7 +146,7 @@ tags = ["ticket-by-id", "not-found"]
 tools = ["get_ticket_info"]
 arguments.get_ticket_info.ticket_id = "T-9999"
 max_tool_errors = 1  # the "not found" error is the expected result here
-answer_contains_any = ["not found", "no ticket", "couldn't find", "could not find", "does not exist", "doesn't exist", "unable to find"]
+answer_contains_any = ["not found", "not be found", "can't be found", "no ticket", "couldn't find", "could not find", "does not exist", "doesn't exist", "unable to find"]
 
 [[cases]]
 id = "ticket-status-pt"
@@ -150,6 +161,9 @@ answer_contains_any = ["open", "aberto"]
 # No tool lists the tickets of a customer yet, so these measure the gap: today the honest
 # outcome is to say so; an answer with ticket ids it could not have found is a hallucination
 # (answer_not_contains). Expected to improve once mcp-server has search_tickets.
+# The expectations describe the target behaviour with search_tickets, so they stay strict:
+# an honest "I cannot list tickets by customer" still fails here (the user did not get the
+# answer), and answer_not_contains can also flag a ticket id quoted as a format example.
 
 [[cases]]
 id = "customer-tickets-bruno"
@@ -175,7 +189,7 @@ prompt = "Does David Lee have any support tickets?"
 tags = ["customer-tickets"]
 [cases.expect]
 tools = ["search_customers"]
-answer_contains_any = ["no tickets", "no support tickets", "doesn't have", "does not have", "has no", "not have any"]
+answer_contains_any = ["no tickets", "no support tickets", "doesn't have", "does not have", "has no", "not have any", "not appear to have", "not currently have"]
 answer_not_contains = ["T-1001", "T-1002", "T-1003"]
 
 [[cases]]

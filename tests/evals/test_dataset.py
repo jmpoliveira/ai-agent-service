@@ -135,3 +135,15 @@ def test_a_case_can_override_the_default_tool_error_budget_even_with_zero():
     assert data.expectation_for(strict).max_tool_errors == 0
     assert data.expectation_for(lenient).max_tool_errors == 1
     assert data.expectation_for(inherits).max_tool_errors == 2
+
+
+def test_fingerprint_ignores_comments_and_formatting(tmp_path: Path):
+    path = tmp_path / "d.toml"
+    path.write_text(_MINIMAL, encoding="utf-8")
+    first = load_dataset(path).fingerprint
+
+    path.write_text(
+        "# changelog: v1 first cases\n" + _MINIMAL.replace(" = ", "="), encoding="utf-8"
+    )
+
+    assert load_dataset(path).fingerprint == first

@@ -45,7 +45,12 @@ same cases.
 10. **Respect provider quotas by waiting.** `--max-rpm` wraps each model in a sliding-window
    `RateLimitedChatModel`; a rate-limit error usually carries a Retry-After longer than the
    retry policy accepts, so waiting before the request is the only way not to lose the run.
-11. **Fail fast on a broken environment.** An unreachable MCP server, bad credentials, an unknown
+11. **Comparable by construction.** Reports record provider, model, settings, system prompt and
+   dataset fingerprints and the git commit. Old reports can be re-graded with a new dataset
+   version (the trajectories are saved), and a comparison warns when the dataset differs.
+   Dataset history is git plus a changelog in the file, not copies of old versions. The
+   fingerprint hashes the graded content, so a comment does not make two runs incomparable.
+12. **Fail fast on a broken environment.** An unreachable MCP server, bad credentials, an unknown
    provider or a model without tool support aborts the eval; transient provider errors are
    recorded per run.
 

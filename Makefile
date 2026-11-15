@@ -11,7 +11,7 @@ COMPOSE     := docker compose
 COMPOSE_ENV := docker compose -f docker-compose.yml -f docker-compose.docker-env.yml
 
 .PHONY: help venv install run run-log eval eval-log test test-unit cov lint format typecheck check \
-        docker-build up up-env down logs restart health clean
+        docker-build up up-env down logs restart health clean regrade
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -45,6 +45,10 @@ eval:  ## Run the tool-use evals against the real agent (see evals/README.md)
 eval-log:  ## Run the evals and also save the output to logs/eval-<timestamp>.log
 	@mkdir -p logs
 	$(PYTHON) -m evals run --repeats $(REPEATS) $(if $(PROVIDER),--provider $(PROVIDER)) $(ARGS) 2>&1 | tee -i logs/eval-$$(date +%Y%m%d-%H%M%S).log
+
+# No model or server needed: re-scores the saved trajectories with the current dataset.
+regrade:  ## Score a saved report again with the current dataset: make regrade REPORT=<path>
+	$(PYTHON) -m evals regrade $(REPORT) $(ARGS)
 
 # ---------- Quality ----------
 test:  ## Run the whole test suite (includes the in-process MCP integration tests)

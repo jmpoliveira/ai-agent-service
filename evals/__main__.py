@@ -1,4 +1,5 @@
-"""Command line: ``python -m evals run --provider ollama --repeats 3``.
+"""Command line: ``python -m evals run --provider ollama --repeats 3``, and
+``python -m evals regrade <report>`` to score a saved report again with the current dataset.
 
 Uses the same settings (.env) and composition root as the service, so the agent under test
 is the agent you deploy. Each run is a normal traced run: its trace id is in the report.
@@ -9,6 +10,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import json
+import re
+import shutil
+import subprocess
 import sys
 import warnings
 from collections.abc import Mapping, Sequence
@@ -23,6 +28,7 @@ from config.log_setup import configure_logging
 from config.settings import Settings, get_settings
 from config.telemetry import setup_telemetry
 from evals.dataset import Dataset, DatasetError, load_dataset
+from evals.regrade import regrade
 from evals.report import ReportError, read_report, render, summarise, write_report
 from evals.runner import Agent, AgentFactory, EvalAbortedError, EvalRunner, RunRecord
 from evals.stubs import StubbingToolGatewayProvider
@@ -52,7 +58,14 @@ class EvalOptions:
     max_rpm: int | None = None
 
 
-def parse_args(argv: Sequence[str]) -> EvalOptions:
+@dataclass(frozen=True, slots=True)
+class RegradeOptions:
+    report: Path
+    dataset: Path
+    output: Path | None
+
+
+def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m evals", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="run a dataset against the agent")
@@ -72,7 +85,22 @@ def parse_args(argv: Sequence[str]) -> EvalOptions:
         type=int,
         help="at most this many model requests per minute (stay under a provider quota)",
     )
+    again = commands.add_parser(
+        "regrade", help="score a saved report again with the dataset (no model calls)"
+    )
+    again.add_argument("report", type=Path, help="report JSON written by `run`")
+    again.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    again.add_argument(
+        "--output", type=Path, help="where to write it (default: next to the report, .v<N>.json)"
+    )
+    return parser
+
+
+def parse_args(argv: Sequence[str]) -> EvalOptions:
+    parser = _parser()
     args = parser.parse_args(list(argv))
+    if args.command != "run":
+        parser.error("expected the run command")
     if args.repeats < 1:
         parser.error("--repeats must be at least 1")
     if args.max_rpm is not None and args.max_rpm < 1:
@@ -93,6 +121,42 @@ def parse_args(argv: Sequence[str]) -> EvalOptions:
     )
 
 
+def parse_regrade_args(argv: Sequence[str]) -> RegradeOptions:
+    parser = _parser()
+    args = parser.parse_args(list(argv))
+    if args.command != "regrade":
+        parser.error("expected the regrade command")
+    return RegradeOptions(report=args.report, dataset=args.dataset, output=args.output)
+
+
+def regrade_report(options: RegradeOptions, out: TextIO) -> int:
+    """Score a saved report with the current dataset. Needs no settings, model or server."""
+    try:
+        dataset = load_dataset(options.dataset)
+        document = json.loads(options.report.read_text(encoding="utf-8"))
+        result = regrade(document, dataset, options.report.name)
+    except (DatasetError, ReportError) as err:
+        print(str(err), file=out)
+        return EXIT_USAGE
+    except OSError as err:
+        print(f"cannot read report {options.report}: {err.strerror}", file=out)
+        return EXIT_USAGE
+    except json.JSONDecodeError as err:
+        print(f"{options.report} is not an eval report: {err}", file=out)
+        return EXIT_USAGE
+
+    # Strip a previous ".vN" so regrading a regraded report does not stack suffixes.
+    stem = re.sub(r"\.v\d+$", "", options.report.stem)
+    path = options.output or options.report.with_name(f"{stem}.v{dataset.version}.json")
+    summary = summarise(result.records)
+    write_report(path, result.meta, summary, result.records)
+    for note in result.notes:
+        print(f"Note: {note}", file=out)
+    print(render(result.meta, summary, result.records), file=out)
+    print(f"\nRegraded report: {path}", file=out)
+    return EXIT_OK
+
+
 async def run_evals(
     options: EvalOptions,
     dataset: Dataset,
@@ -101,7 +165,7 @@ async def run_evals(
     out: TextIO,
 ) -> int:
     """Run, report and decide the exit code. Separate from ``main`` so it can be tested."""
-    baseline = read_report(options.baseline)[1] if options.baseline else None
+    baseline_meta, baseline = read_report(options.baseline) if options.baseline else (None, None)
     cases = dataset.select(set(options.cases), set(options.tags))
     if not cases:
         print("No cases match the selection.", file=out)
@@ -146,7 +210,7 @@ async def run_evals(
     write_report(path, full_meta, summary, records)
 
     print("", file=out)
-    print(render(full_meta, summary, records, baseline), file=out)
+    print(render(full_meta, summary, records, baseline, baseline_meta), file=out)
     print(f"\nReport: {path}", file=out)
     if options.fail_under is not None and summary.pass_rate < options.fail_under:
         print(f"Run pass rate is below --fail-under {options.fail_under:.2f}", file=out)
@@ -167,11 +231,36 @@ def build_meta(settings: Settings, dataset: Dataset, provider: str, model: str) 
         "system_prompt_fingerprint": hashlib.sha256(
             settings.agent_system_prompt.encode("utf-8")
         ).hexdigest()[:12],
+        **git_revision(),
     }
 
 
+def git_revision(cwd: Path | None = None) -> dict[str, Any]:
+    """The commit the eval ran on, so any result can be traced back to the exact code, prompt
+    and dataset (``git show <commit>:evals/datasets/tool_use.toml``). ``git_dirty`` is true
+    when there were uncommitted changes, i.e. the commit alone does not describe the run."""
+    unknown: dict[str, Any] = {"git_commit": None, "git_dirty": None}
+    git = shutil.which("git")
+    if git is None:
+        return unknown
+    try:
+        # Fixed arguments, no shell: nothing user-controlled reaches the command line.
+        commit = subprocess.run(  # noqa: S603
+            [git, "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, check=True
+        ).stdout.strip()
+        status = subprocess.run(  # noqa: S603
+            [git, "status", "--porcelain"], cwd=cwd, capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return unknown
+    return {"git_commit": commit, "git_dirty": bool(status.strip())}
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
-    options = parse_args(sys.argv[1:] if argv is None else argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["regrade"]:
+        return regrade_report(parse_regrade_args(arguments), out)
+    options = parse_args(arguments)
     try:
         settings = get_settings()
     except ValidationError as err:

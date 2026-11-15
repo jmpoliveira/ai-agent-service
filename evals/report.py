@@ -108,12 +108,11 @@ def render(
     summary: Summary,
     records: Sequence[RunRecord],
     baseline: Summary | None = None,
+    baseline_meta: Mapping[str, Any] | None = None,
 ) -> str:
     lines = [
-        f"Dataset {meta['dataset']} v{meta['dataset_version']} ({meta['dataset_fingerprint']})"
-        f" · {meta['provider']} / {meta['model']} · temperature {meta['temperature']}"
-        f" · {meta['cases']} cases x {meta['repeats']} runs"
-        f" · system prompt {meta['system_prompt_fingerprint']}",
+        _header(meta),
+        *_baseline_lines(meta, baseline_meta),
         "",
         _row("Metric", "Value", "Baseline", "Delta"),
         _row("-" * 30, "-" * 9, "-" * 9, "-" * 7),
@@ -160,6 +159,43 @@ def render(
     if base:
         lines += _case_changes(summary, base)
     return "\n".join(lines)
+
+
+def _header(meta: Mapping[str, Any]) -> str:
+    # .get: reports written by older versions of the harness may lack newer fields.
+    def field(key: str) -> Any:
+        return meta.get(key, "?")
+
+    header = (
+        f"Dataset {field('dataset')} v{field('dataset_version')} ({field('dataset_fingerprint')})"
+        f" · {field('provider')} / {field('model')} · temperature {field('temperature')}"
+        f" · {field('cases')} cases x {field('repeats')} runs"
+        f" · system prompt {field('system_prompt_fingerprint')}"
+    )
+    if meta.get("git_commit"):
+        dirty = " (uncommitted changes)" if meta.get("git_dirty") else ""
+        header += f" · commit {str(meta['git_commit'])[:7]}{dirty}"
+    if meta.get("regraded_from"):
+        header += f" · regraded from v{meta['regraded_from'].get('dataset_version', '?')}"
+    return header
+
+
+def _baseline_lines(meta: Mapping[str, Any], base: Mapping[str, Any] | None) -> list[str]:
+    if base is None:
+        return []
+    lines = [
+        f"Baseline: {base.get('dataset')} v{base.get('dataset_version')}"
+        f" ({base.get('dataset_fingerprint')}) · {base.get('provider')} / {base.get('model')}"
+        f" · system prompt {base.get('system_prompt_fingerprint')}"
+        f" · {base.get('started_at', '?')}"
+    ]
+    if base.get("dataset_fingerprint") != meta.get("dataset_fingerprint"):
+        # The deltas would mix two changes: the system's behaviour and the scoring rules.
+        lines.append(
+            "WARNING: the baseline was graded with a different dataset; deltas mix behaviour "
+            "changes with expectation changes. Regrade it first: python -m evals regrade <report>"
+        )
+    return lines
 
 
 def _case_changes(summary: Summary, base: Summary) -> list[str]:

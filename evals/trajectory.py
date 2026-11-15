@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -73,3 +74,30 @@ class Trajectory:
             model=run.model,
             trace_id=run.trace_id,
         )
+
+
+def trajectory_from_report(data: Mapping[str, Any], provider: str, model: str) -> Trajectory:
+    """Rebuild a trajectory saved by ``report.write_report`` (the inverse of its ``runs`` entry).
+
+    Raises KeyError or TypeError when the data is not a saved trajectory.
+    """
+    calls = tuple(
+        RecordedCall(
+            name=str(call["name"]),
+            arguments=dict(call["arguments"]),
+            is_error=bool(call["is_error"]),
+            step=int(call["step"]),
+        )
+        for call in data["calls"]
+    )
+    return Trajectory(
+        calls=calls,
+        answer=str(data["answer"]),
+        stop_reason=str(data["stop_reason"]),
+        steps=int(data["steps"]),
+        input_tokens=int(data["input_tokens"]),
+        output_tokens=int(data["output_tokens"]),
+        provider=provider,
+        model=model,
+        trace_id=data.get("trace_id"),
+    )

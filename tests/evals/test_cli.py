@@ -169,3 +169,93 @@ def test_main_runs_end_to_end_with_the_real_wiring(monkeypatch: pytest.MonkeyPat
     assert meta["max_rpm"] == 14
     assert meta["warnings"] == ["temperature will be ignored"]
     assert "Library warnings (may affect the results):" in out.getvalue()
+
+
+def _write_report(path: Path, answer: str) -> None:
+    run: dict[str, Any] = {
+        "case": "missing",
+        "repeat": 1,
+        "passed": False,
+        "error": None,
+        "latency_seconds": 1.0,
+        "checks": [],
+        "trajectory": {
+            "calls": [],
+            "answer": answer,
+            "stop_reason": "finished",
+            "steps": 1,
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "trace_id": None,
+        },
+    }
+    meta = {**META, "dataset_version": 1, "dataset_fingerprint": "old"}
+    path.write_text(json.dumps({"meta": meta, "summary": {}, "runs": [run]}), encoding="utf-8")
+
+
+def test_regrade_writes_a_versioned_report_next_to_the_original(tmp_path: Path):
+    # Arrange: a v1 report, then a v3 dataset that accepts the answer.
+    report = tmp_path / "20261114-ollama-tool_use.v1.json"
+    _write_report(report, "It could not be found.")
+    data = tmp_path / "d.toml"
+    data.write_text(
+        'name = "test"\nversion = 3\n[[cases]]\nid = "missing"\nprompt = "?"\n'
+        '[cases.expect]\nanswer_contains_any = ["not be found"]\n',
+        encoding="utf-8",
+    )
+    out = io.StringIO()
+
+    # Act: no settings, model or server needed.
+    code = cli.main(["regrade", str(report), "--dataset", str(data)], out)
+
+    # Assert
+    assert code == EXIT_OK, out.getvalue()
+    regraded = tmp_path / "20261114-ollama-tool_use.v3.json"  # ".v1" replaced, not stacked
+    document = json.loads(regraded.read_text(encoding="utf-8"))
+    assert document["meta"]["dataset_version"] == 3
+    assert document["runs"][0]["passed"] is True
+    assert "100.0%" in out.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (None, "cannot read report"),
+        ("not json", "not an eval report"),
+        ("{}", "not an eval report"),
+    ],
+)
+def test_regrade_reports_unreadable_input(tmp_path: Path, content: str | None, message: str):
+    report = tmp_path / "r.json"
+    if content is not None:
+        report.write_text(content, encoding="utf-8")
+    out = io.StringIO()
+
+    code = cli.main(["regrade", str(report)], out)
+
+    assert code == EXIT_USAGE
+    assert message in out.getvalue()
+
+
+def test_each_parser_only_accepts_its_own_command():
+    with pytest.raises(SystemExit):
+        parse_args(["regrade", "r.json"])
+    with pytest.raises(SystemExit):
+        cli.parse_regrade_args(["run"])
+
+
+def _no_program(_: str) -> None:
+    return None
+
+
+def test_git_revision_describes_the_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # Not a repository: unknown, not a crash.
+    assert cli.git_revision(tmp_path) == {"git_commit": None, "git_dirty": None}
+    # This checkout (CI and local runs are git repositories).
+    revision = cli.git_revision(Path(__file__).resolve().parents[2])
+    if revision["git_commit"] is not None:
+        assert len(revision["git_commit"]) == 40
+        assert isinstance(revision["git_dirty"], bool)
+    # No git installed.
+    monkeypatch.setattr(cli.shutil, "which", _no_program)
+    assert cli.git_revision() == {"git_commit": None, "git_dirty": None}

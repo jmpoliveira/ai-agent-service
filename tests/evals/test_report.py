@@ -107,3 +107,31 @@ def test_render_compares_with_a_baseline():
     assert "Changed cases vs baseline:" in text
     assert "a: 0.0% -> 100.0%" in text
     assert "b: 100.0% -> 0.0%" in text
+
+
+def test_render_names_the_baseline_and_warns_when_its_dataset_differs():
+    base_meta = {**META, "started_at": "2026-11-14T19:35:08+00:00"}
+    summary = summarise(_records())
+
+    same = render(META, summary, _records(), summary, base_meta)
+    other = render(META, summary, _records(), summary, {**base_meta, "dataset_fingerprint": "x"})
+
+    assert "Baseline: tool_use v1 (abc) · ollama / qwen3:8b" in same
+    assert "WARNING" not in same
+    assert "WARNING: the baseline was graded with a different dataset" in other
+
+
+def test_header_shows_commit_and_regrade_origin_and_tolerates_old_reports():
+    meta = {
+        **META,
+        "git_commit": "f810f03aaaa",
+        "git_dirty": True,
+        "regraded_from": {"dataset_version": 3},
+    }
+
+    header = render(meta, summarise([]), []).splitlines()[0]
+    old = render({"dataset": "tool_use"}, summarise([]), []).splitlines()[0]
+
+    assert "commit f810f03 (uncommitted changes)" in header
+    assert "regraded from v3" in header
+    assert old.startswith("Dataset tool_use v? (?) · ? / ?")
