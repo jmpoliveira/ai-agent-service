@@ -84,6 +84,20 @@ def regrade(document: Mapping[str, Any], dataset: Dataset, source: str) -> Regra
         for case in dataset.cases
         if case.id not in graded
     ]
+    uses_ids = any(dataset.expectation_for(case).id_pattern for case in dataset.cases)
+    unrecorded = any(
+        record.trajectory is not None
+        and (
+            record.trajectory.prompt is None
+            or any(call.result is None for call in record.trajectory.calls)
+        )
+        for record in records
+    )
+    if uses_ids and unrecorded:
+        notes.append(
+            "grounded_ids not checked: this report was written before tool results were "
+            "recorded; a real run is needed to apply it"
+        )
     new_meta = {
         **meta,
         "dataset": dataset.name,

@@ -41,7 +41,10 @@ same cases.
 9. **Penalise guessing.** A failed tool call (an invented id, a customer id passed as a ticket
    id) counts against the run (`max_tool_errors`, default 0), because a model can guess its way
    to a correct final answer. The first real Gemini run did exactly that, and passed on answer
-   checks alone.
+   checks alone. Failed guesses are only half of it: without thinking, qwen3 inferred T-100N
+   from C-00N, guessed right, and passed. So reports record the prompt and every tool result,
+   and `grounded_ids` requires every identifier argument (`id_pattern`) to have appeared before
+   the call. It also catches writes made with an invented id.
 10. **Respect provider quotas by waiting.** `--max-rpm` wraps each model in a sliding-window
    `RateLimitedChatModel`; a rate-limit error usually carries a Retry-After longer than the
    retry policy accepts, so waiting before the request is the only way not to lose the run.

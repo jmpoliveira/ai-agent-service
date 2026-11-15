@@ -12,12 +12,17 @@ from src.domain.messages import Role
 
 @dataclass(frozen=True, slots=True)
 class RecordedCall:
-    """A tool call the model asked for, and whether its result was an error."""
+    """A tool call the model asked for, and what came back.
+
+    ``result`` is the text the model received (sanitised and framed). It is ``None`` in reports
+    written before results were recorded, so checks that need it are skipped for those.
+    """
 
     name: str
     arguments: dict[str, Any]
     is_error: bool
     step: int
+    result: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +36,8 @@ class Trajectory:
     provider: str
     model: str
     trace_id: str | None
+    # The user's prompt as the model saw it; None in reports written before it was recorded.
+    prompt: str | None = None
 
     @property
     def tool_names(self) -> tuple[str, ...]:
@@ -43,11 +50,10 @@ class Trajectory:
         Graded on what the model *asked for*, not only on what reached the server: a call to
         a tool that was never offered is blocked by the agent, but it is still a wrong decision.
         """
-        errors = {
-            message.tool_call_id: message.is_error
-            for message in run.messages
-            if message.role is Role.TOOL
+        results = {
+            message.tool_call_id: message for message in run.messages if message.role is Role.TOOL
         }
+        prompt = next((m.content for m in run.messages if m.role is Role.USER), None)
         calls: list[RecordedCall] = []
         step = 0
         for message in run.messages:
@@ -58,8 +64,9 @@ class Trajectory:
                 RecordedCall(
                     name=call.name,
                     arguments=dict(call.arguments),
-                    is_error=errors.get(call.id, False),
+                    is_error=result.is_error if (result := results.get(call.id)) else False,
                     step=step,
+                    result=result.content if result else None,
                 )
                 for call in message.tool_calls
             )
@@ -73,6 +80,7 @@ class Trajectory:
             provider=run.provider,
             model=run.model,
             trace_id=run.trace_id,
+            prompt=prompt,
         )
 
 
@@ -87,6 +95,7 @@ def trajectory_from_report(data: Mapping[str, Any], provider: str, model: str) -
             arguments=dict(call["arguments"]),
             is_error=bool(call["is_error"]),
             step=int(call["step"]),
+            result=call.get("result"),
         )
         for call in data["calls"]
     )
@@ -100,4 +109,5 @@ def trajectory_from_report(data: Mapping[str, Any], provider: str, model: str) -
         provider=provider,
         model=model,
         trace_id=data.get("trace_id"),
+        prompt=data.get("prompt"),
     )

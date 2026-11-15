@@ -84,8 +84,10 @@ LOG_LLM_CONTENT=true make eval-log PROVIDER=gemini REPEATS=1 ARGS="--verbose --c
 
 Each run prints its progress, a summary table and the path of a JSON report in
 `evals/results/` (git-ignored). The report holds the settings (provider, model, temperature,
-dataset fingerprint, system prompt fingerprint) and every run: the tool calls the model asked
-for, its answer, the checks, and the **trace id**, so any failure can be opened in Jaeger.
+dataset fingerprint, system prompt fingerprint) and every run: the prompt, the tool calls the
+model asked for with the result of each, its answer, the checks, and the **trace id**, so any
+failure can be opened in Jaeger. Reports therefore contain tool data: with the mock server that
+is harmless, but never commit a report produced against real customer data.
 
 To keep a result as a baseline, copy its report to `evals/baselines/` and commit it.
 
@@ -105,8 +107,10 @@ make regrade REPORT=evals/baselines/20261114-193508-ollama-tool_use.json
 # writes 20261114-193508-ollama-tool_use.v4.json next to it (v4 = current dataset version)
 ```
 
-Re-grading cannot run cases that are new in the dataset (the output lists them), nor tell how a
-different prompt, model or tool set would behave: those need a real run.
+Checks that need tool results (`grounded_ids`) are skipped for reports written before results
+were recorded, and the output says so. Re-grading cannot run cases that are new in the dataset
+(the output lists them), nor tell how a different prompt, model or tool set would behave:
+those need a real run.
 
 **Dataset history.** Each dataset version is a commit: `git log -p -- evals/datasets/tool_use.toml`
 shows every change, and the changelog at the top of the file says why. The fingerprint hashes
@@ -160,6 +164,7 @@ Every expectation is optional; a case is scored only on what it states.
 | `answer_contains` / `_any` / `answer_not_contains` | the final answer has all / any / none of these texts                                           |
 | `max_steps`                                        | the run used at most this many model turns                                                     |
 | `max_tool_errors`                                  | at most this many tool calls returned an error (default 0: failed calls usually mean guessing) |
+| `id_pattern`                                       | every argument matching this regex appeared before the call, in the prompt or an earlier tool result (`grounded_ids`; a right guess still fails). `""` disables it |
 | `stop_reason`                                      | the run ended this way (default `finished`)                                                    |
 
 Text comparisons ignore case and repeated spaces. `[stub_tools]` (dataset or case) replaces a

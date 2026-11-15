@@ -147,3 +147,14 @@ def test_fingerprint_ignores_comments_and_formatting(tmp_path: Path):
     )
 
     assert load_dataset(path).fingerprint == first
+
+
+def test_id_pattern_must_be_a_valid_regex_and_a_case_can_switch_it_off():
+    with pytest.raises(ValueError, match="not a valid regular expression"):
+        expect(id_pattern="[unclosed")
+    off = case("off", expect={"id_pattern": ""})
+    inherits = case("inherits")
+    data = dataset(off, inherits, defaults={"id_pattern": r"^T-\d+$"})
+
+    assert data.expectation_for(off).id_pattern == ""
+    assert data.expectation_for(inherits).id_pattern == r"^T-\d+$"

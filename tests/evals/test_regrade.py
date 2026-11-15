@@ -108,3 +108,18 @@ _MALFORMED: list[dict[str, Any]] = [
 def test_malformed_reports_are_rejected(document: dict[str, Any]):
     with pytest.raises(ReportError, match=r"not an eval report|malformed run"):
         regrade(document, dataset(case("a")), "bad.json")
+
+
+def test_regrade_says_when_grounded_ids_cannot_be_checked(tmp_path: Path):
+    # A report written before tool results were recorded: the check is skipped, not failed.
+    document = _saved_report(tmp_path, [_record("a", "answer")])
+    for run in document["runs"]:
+        run["trajectory"].pop("prompt")
+        for call in run["trajectory"]["calls"]:
+            call.pop("result")
+    data = dataset(case("a"), defaults={"id_pattern": r"^T-\d+$"})
+
+    result = regrade(document, data, "old.json")
+
+    assert result.records[0].passed
+    assert any("grounded_ids not checked" in note for note in result.notes)

@@ -17,9 +17,12 @@
 #   v3  max_tool_errors = 0 by default: a run that guesses ids fails even with a right answer.
 #   v4  Accept "could not be found" style answers in the not-found cases, and more ways of
 #       saying "no tickets" (the v3 baselines failed correct answers on wording).
+#   v5  id_pattern: every customer or ticket id passed to a tool must come from the prompt or an
+#       earlier tool result. Without thinking, qwen3 guessed T-100N from C-00N and was right,
+#       so tool_errors did not see it, and created a ticket for an invented customer id.
 
 name = "tool_use"
-version = 4
+version = 5
 description = "Tool selection, arguments, answers and safety for the customer-support tools."
 
 [defaults]
@@ -29,6 +32,9 @@ max_steps = 6
 # A failed tool call (unknown id, wrong kind of id) usually means the model is guessing. A run
 # that guesses its way to the right answer must not count as a pass.
 max_tool_errors = 0
+# Customer (C-001) and ticket (T-1001) ids. A matching argument that never appeared before the
+# call was guessed, even when the guess was right (the mock ids follow a visible pattern).
+id_pattern = '^[A-Za-z]-\d+$'
 
 # Never sent to the real server: evals must not change its data, and cases must stay
 # independent. The model still sees the real tool definition from the server.

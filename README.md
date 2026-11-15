@@ -200,26 +200,28 @@ server, the HTTP API, settings validation, and the dependency rule.
 endpoints, the Docker build and run, the OTLP export to Jaeger, and whether each model family
 produces good tool calls (measure it with `make eval`).
 
-Not implemented yet: everything in the roadmap below. Until rate limiting and request-body size
-limits exist, put a reverse proxy in front of the service.
+Not implemented yet: the roadmap below, apart from the evals of step 1. Until rate limiting and
+request-body size limits exist, put a reverse proxy in front of the service.
 
 ## Roadmap
 
 The order follows one rule: **measure first, then protect, then add features.** Each step is a
-tag (`v0.1`, `v0.2`...) with its ADRs. Where each capability lives follows
-[ADR 0004](docs/adr/0004-evolution-strategy.md).
+tag (`v0.2`, `v0.3`...) with its ADRs. Where each capability lives follows
+[ADR 0004](docs/adr/0004-evolution-strategy.md). `v0.1.0` (the agent loop, three providers, MCP
+tools, tracing) is done.
 
 | # | Capability | What | Why at this point |
 |---|---|---|---|
-| 1 | **Evals and tool design** | Harness and first dataset done (`make eval`); next: baselines per model, then `search_tickets` in the mcp-server measured against them | Every later change is measured against this |
-| 2 | **Guardrails and security I** | Human confirmation for write tools, per-tool permissions, input/output guardrails (injection, PII), rate limiting, request size limits | The agent can already change data |
-| 3 | **LLM observability and cost** | Cost, latency and tokens per run as OpenTelemetry metrics; maybe Langfuse or Phoenix | Caching and routing need these numbers |
-| 4 | **RAG** | Separate ingestion repository + a `search_knowledge_base` MCP tool, with retrieval evals (recall@k, faithfulness) | Fits the existing ports, no architecture change |
-| 5 | **Context memory** | Short-term conversation sessions in a store (the service stays stateless), context-window trimming or summarising; long-term memory later | Adds state and stores untrusted text (memory poisoning), so it comes after guardrails |
-| 6 | **Caching** | Provider prompt caching -> read-only tool results -> embeddings -> semantic cache last | Ordered from safest to riskiest; a semantic cache can return a wrong answer for a similar question |
-| 7 | **Streaming and structured outputs** | SSE responses, typed final answers | Needs a consumer to be worth its complexity |
-| 8 | **Advanced loops** | Parallel read-only tool calls, plan-and-execute, reflection, resumable runs (where LangGraph starts to pay off) | Only once evals show the simple loop is the limit |
-| 9 | **Security II** | OAuth 2.1 towards MCP, a secrets manager, tenant isolation, cost budgets | Needed before real multi-user use |
-| 10 | **Deterministic model routing** | Rules by task type, size or cost (see [ADR 0003](docs/adr/0003-model-selection.md)) | Rules come from eval data |
-| 11 | **Ecosystem** | MCP resources and prompts, an MCP gateway preserving `_meta`, multi-agent / A2A | Builds on everything above |
-| 12 | **Production** | Job queue for long runs, evals as a CI gate, Kubernetes | Operating at scale |
+| 1 | **Evals and tool design** | Harness, dataset and first baselines done (Ollama, Gemini; see [EXPERIMENTS.md](evals/EXPERIMENTS.md)); next: Claude baseline, then `search_tickets` in the mcp-server measured against them | Every later change is measured against this |
+| 2 | **Azure OpenAI provider** | A fourth `ChatModel` adapter, usable in `LLM_FALLBACKS` and measured in the eval baselines | The most common enterprise AI platform; the port makes it a small, contained change |
+| 3 | **RAG** | Retrieval from the RAG services (their own repositories, with their own deployment lifecycle) exposed as a `search_knowledge_base` MCP tool; retrieval and answer evals (recall@k, faithfulness with an LLM judge) | Retrieval is a read-only tool on the existing path, so no architecture change. Documents are untrusted input: results go through the same sanitisation, and the injection eval cases cover them |
+| 4 | **Guardrails and security I** | Human confirmation for write tools (MCP elicitation), per-tool permissions, input/output guardrails (injection, PII), rate limiting, request size limits; checked against the OWASP Top 10 for LLM applications | The agent can already change data, and the safety eval cases show where models fail |
+| 5 | **LLM observability and cost** | Cost, latency and tokens per run as OpenTelemetry metrics; the existing spans exported to Langfuse over OTLP (no SDK); provider prompt caching, measured | Caching, routing and budgets need these numbers |
+| 6 | **Stateful loop and context memory** | A LangGraph loop strategy as a new use case next to `RunAgent`, behind the same ports and chosen by config; checkpointed sessions in a store (the service stays stateless); human-in-the-loop interrupts reusing step 4. Demo use case: an AI-assisted architecture impact assessment, with domain tools in the mcp-server | Resumable runs and confirmations are the point where LangGraph pays off ([ADR 0001](docs/adr/0001-architecture.md)); the evals compare it with the explicit loop. Memory stores untrusted text (memory poisoning), so it comes after guardrails |
+| 7 | **Caching** | Read-only tool results -> embeddings -> semantic cache last | Ordered from safest to riskiest; a semantic cache can return a wrong answer for a similar question |
+| 8 | **Streaming and structured outputs** | SSE responses, typed final answers | Needs a consumer to be worth its complexity |
+| 9 | **Advanced loop patterns** | Parallel read-only tool calls, plan-and-execute, reflection | Only once evals show the current loops are the limit |
+| 10 | **Security II** | OAuth 2.1 towards MCP, a secrets manager, tenant isolation, cost budgets | Needed before real multi-user use |
+| 11 | **Deterministic model routing** | Rules by task type, size or cost (see [ADR 0003](docs/adr/0003-model-selection.md)) | Rules come from eval data |
+| 12 | **Ecosystem** | MCP resources and prompts, an MCP gateway preserving `_meta`, multi-agent / A2A | Builds on everything above |
+| 13 | **Production** | Job queue for long runs, evals as a CI gate, Kubernetes | Operating at scale |

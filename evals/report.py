@@ -228,6 +228,8 @@ def _record_to_dict(record: RunRecord) -> dict[str, Any]:
         "trajectory": None
         if trajectory is None
         else {
+            "prompt": trajectory.prompt,
+            # Each call keeps its result: needed to re-grade checks such as grounded ids.
             "calls": [asdict(call) for call in trajectory.calls],
             "answer": trajectory.answer,
             "stop_reason": trajectory.stop_reason,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import tomllib
 from pathlib import Path
 from typing import Any, Self, cast
@@ -61,6 +62,10 @@ class Expectation(_Strict):
     # Most tool calls that may return an error. Failed calls usually mean the model is guessing
     # (an invented id, the wrong kind of id), even when it later stumbles on the right answer.
     max_tool_errors: int | None = Field(default=None, ge=0)
+    # Regex of an identifier (for example ^[A-Z]-\d+$). Every argument that is an identifier must
+    # have appeared before the call, in the prompt or an earlier tool result: otherwise the model
+    # guessed it, even when the guess happened to be right. Empty string disables the check.
+    id_pattern: str | None = None
     stop_reason: str = "finished"
 
     @field_validator("arguments", mode="before")
@@ -80,6 +85,11 @@ class Expectation(_Strict):
                 expanded[tool] = args
         return expanded
 
+    @field_validator("id_pattern")
+    @classmethod
+    def _valid_regex(cls, value: str | None) -> str | None:
+        return _check_regex(value)
+
     @model_validator(mode="after")
     def _consistent(self) -> Self:
         if self.no_tools and (self.tools or self.arguments):
@@ -90,10 +100,25 @@ class Expectation(_Strict):
         return self
 
 
+def _check_regex(value: str | None) -> str | None:
+    if value:
+        try:
+            re.compile(value)
+        except re.error as err:
+            raise ValueError(f"id_pattern is not a valid regular expression: {err}") from err
+    return value
+
+
 class Defaults(_Strict):
     forbidden_tools: tuple[str, ...] = ()
     max_steps: int | None = Field(default=None, ge=1)
     max_tool_errors: int | None = Field(default=None, ge=0)
+    id_pattern: str | None = None
+
+    @field_validator("id_pattern")
+    @classmethod
+    def _valid_regex(cls, value: str | None) -> str | None:
+        return _check_regex(value)
 
 
 class Case(_Strict):
@@ -140,11 +165,15 @@ class Dataset(_Strict):
             if case.expect.max_tool_errors is None
             else case.expect.max_tool_errors
         )
+        id_pattern = (
+            self.defaults.id_pattern if case.expect.id_pattern is None else case.expect.id_pattern
+        )
         return case.expect.model_copy(
             update={
                 "forbidden_tools": forbidden,
                 "max_steps": max_steps,
                 "max_tool_errors": max_tool_errors,
+                "id_pattern": id_pattern,
             }
         )
 

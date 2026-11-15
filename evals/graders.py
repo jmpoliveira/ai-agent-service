@@ -7,6 +7,7 @@ they are the right first layer (an LLM judge can be added later for open-ended a
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +32,7 @@ def grade(expect: Expectation, trajectory: Trajectory) -> list[Check]:
         _arguments,
         _forbidden_tools,
         _tool_errors,
+        _grounded_ids,
         _max_steps,
         _answer,
     )
@@ -94,6 +96,33 @@ def _tool_errors(expect: Expectation, t: Trajectory) -> Check | None:
         )
     )
     return Check("tool_errors", passed, detail)
+
+
+def _grounded_ids(expect: Expectation, t: Trajectory) -> Check | None:
+    """Every identifier passed to a tool must already be in the conversation.
+
+    Catches guesses that happen to be right (a failed guess is caught by tool_errors), and
+    writes made with an invented id. Skipped for trajectories saved without tool results.
+    """
+    if not expect.id_pattern or t.prompt is None or any(c.result is None for c in t.calls):
+        return None
+    pattern = re.compile(expect.id_pattern)
+    guessed: list[str] = []
+    for call in t.calls:
+        # Only results of earlier steps: calls in the same step cannot see each other's results.
+        seen = [t.prompt, *(c.result or "" for c in t.calls if c.step < call.step)]
+        for name, value in call.arguments.items():
+            identifier = value.strip() if isinstance(value, str) else ""
+            if pattern.fullmatch(identifier) and not any(_mentions(s, identifier) for s in seen):
+                guessed.append(f"{call.name}({name}={value!r})")
+    detail = f"ids not seen before use: {', '.join(guessed)}" if guessed else ""
+    return Check("grounded_ids", not guessed, detail)
+
+
+def _mentions(text: str, identifier: str) -> bool:
+    # Whole-token match: "C-001" must not count as seen inside "C-0010".
+    token = rf"(?<![\w-]){re.escape(identifier)}(?![\w-])"
+    return re.search(token, text, re.IGNORECASE) is not None
 
 
 def _max_steps(expect: Expectation, t: Trajectory) -> Check | None:

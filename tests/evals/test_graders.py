@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from evals.graders import Check, grade
@@ -150,3 +152,69 @@ def test_tool_errors_allow_an_expected_error():
     run = trajectory([("get_ticket_info", {"ticket_id": "T-9999"})], errors=[True])
 
     assert _by_name(grade(expect(max_tool_errors=1), run))["tool_errors"].passed
+
+
+ID = r"^[A-Za-z]-\d+$"
+CUSTOMER = '{"customers": [{"id": "C-001", "name": "Alice Johnson"}]}'
+TICKET = '{"id": "T-1001", "customer_id": "C-001", "status": "in_progress"}'
+
+
+def _grounded(run: Any) -> Check:
+    return _by_name(grade(expect(id_pattern=ID), run))["grounded_ids"]
+
+
+def test_a_right_guess_is_still_a_guess():
+    # The model saw C-001 and guessed T-1001 from the pattern; the server said "ok".
+    run = trajectory(
+        [("search_customers", {"query": "Alice"}), ("get_ticket_info", {"ticket_id": "T-1001"})],
+        prompt="Which tickets does Alice have?",
+        results=[CUSTOMER, TICKET],
+    )
+
+    check = _grounded(run)
+
+    assert not check.passed
+    assert check.detail == "ids not seen before use: get_ticket_info(ticket_id='T-1001')"
+
+
+def test_ids_from_the_prompt_or_an_earlier_result_are_grounded():
+    run = trajectory(
+        [
+            ("get_ticket_info", {"ticket_id": "T-1001"}),  # from the prompt, lower case there
+            ("search_customers", {"query": "C-001"}),  # from the first result
+        ],
+        prompt="Status of t-1001?",
+        results=[TICKET, CUSTOMER],
+    )
+
+    assert _grounded(run).passed
+
+
+def test_results_of_the_same_step_do_not_ground_each_other():
+    run = trajectory(
+        [("search_customers", {"query": "Alice"}), ("create_ticket", {"customer_id": "C-001"})],
+        prompt="Open a ticket for Alice",
+        results=[CUSTOMER, "{}"],
+        call_steps=[1, 1],  # asked for together, before any result was back
+    )
+
+    assert "create_ticket(customer_id='C-001')" in _grounded(run).detail
+
+
+def test_ids_match_whole_tokens_only():
+    run = trajectory(
+        [("get_ticket_info", {"ticket_id": "T-100"})],
+        prompt="Is T-1001 open?",  # T-100 is only a prefix of what the user wrote
+        results=[TICKET],
+    )
+
+    assert not _grounded(run).passed
+
+
+def test_grounding_is_skipped_without_recorded_results_or_when_disabled():
+    old_report = trajectory([("get_ticket_info", {"ticket_id": "T-1"})], results=None)
+    recorded = trajectory([("get_ticket_info", {"ticket_id": "T-1"})], prompt="?", results=["x"])
+
+    assert "grounded_ids" not in _by_name(grade(expect(id_pattern=ID), old_report))
+    assert "grounded_ids" not in _by_name(grade(expect(id_pattern=""), recorded))
+    assert "grounded_ids" not in _by_name(grade(expect(), recorded))

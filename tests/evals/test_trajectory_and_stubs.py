@@ -29,6 +29,10 @@ async def test_trajectory_lists_requested_calls_with_their_step_and_error_flag()
     assert trajectory.stop_reason == "finished"
     assert trajectory.steps == 2
     assert trajectory.input_tokens == 20
+    # What the model saw, kept for checks such as grounded ids.
+    assert trajectory.prompt == "Where does Bruno work?"
+    assert trajectory.calls[0].result is not None
+    assert trajectory.calls[0].result.startswith('<tool_result name="search_customers">')
 
 
 async def test_stubbed_tools_never_reach_the_server_but_others_do():

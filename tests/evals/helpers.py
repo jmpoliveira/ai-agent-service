@@ -39,9 +39,18 @@ def trajectory(
     stop_reason: str = "finished",
     steps: int = 1,
     errors: Sequence[bool] = (),
+    prompt: str | None = None,
+    results: Sequence[str] | None = None,
+    call_steps: Sequence[int] | None = None,
 ) -> Trajectory:
     recorded = tuple(
-        RecordedCall(name, args, errors[i] if i < len(errors) else False, step=i + 1)
+        RecordedCall(
+            name,
+            args,
+            errors[i] if i < len(errors) else False,
+            step=call_steps[i] if call_steps else i + 1,
+            result=results[i] if results is not None else None,
+        )
         for i, (name, args) in enumerate(calls)
     )
     return Trajectory(
@@ -54,6 +63,7 @@ def trajectory(
         provider="fake",
         model="fake-model",
         trace_id="abc123",
+        prompt=prompt,
     )
 
 
