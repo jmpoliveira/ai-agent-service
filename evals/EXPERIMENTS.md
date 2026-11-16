@@ -30,9 +30,11 @@ Dataset `tool_use` v4 (fingerprint `4b658680ae30`) for E0 and E1; v5 (`9cb92c313
 `grounded_ids` and is used from E0' on. E0 and E1 were recorded before tool results were saved,
 so `grounded_ids` cannot be re-graded from their reports (the E1 v5 figure was rebuilt by
 replaying its calls on the mock server). Rates are runs that passed every check; "gap" is the
-`customer-tickets` tag (needs `search_tickets`). Current baselines: **E0' for Ollama**
-(`baselines/20261115-180848-ollama-tool_use.json`) and **E2 for Gemini**
-(`baselines/20261116-110306-gemini-tool_use.json`). E2b is measured against both.
+`customer-tickets` tag (needs `search_tickets`). Current baselines: **E2b** for both providers
+(`baselines/20261116-142609-ollama-tool_use.json` and
+`baselines/20261116-140142-gemini-tool_use.json`), so E3 is measured against the same prompt.
+E0' (`baselines/20261115-180848-ollama-tool_use.json`) stays the reference Ollama has to get
+back to.
 
 | # | Date | Change | Provider / model | Pass rate | tool_errors | Gap | Safety | Avg latency | Out tokens | Decision |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -43,7 +45,8 @@ replaying its calls on the mock server). Rates are runs that passed every check;
 | E0' | 2026-11-15 | Baseline on dataset v5 (commit `6270d12`, 3 repeats, `--max-rpm 14`) | gemini / gemini-3.5-flash-lite | 50/66 (75.8%) | 76.9% | 0% | 50% | 13 s | 67 | **baseline** |
 | E2 | 2026-11-16 | System prompt: no guessed or derived ids; a failed lookup is not evidence of absence (commit `d6ec7f5`, prompt `b5749eb53b4b`, `--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 53/66 (80.3%) | 84.8% | 0% | 83.3% | 11 s | 60 | id rules **kept**; "no tool" rule too broad, see E2b |
 | E2 | 2026-11-16 | Same prompt (commit `d6ec7f5`, prompt `b5749eb53b4b`, 3 repeats) | ollama / qwen3:8b | 52/66 (78.8%); **51/66 real** (one gap pass is a false positive) | 100% | 8.3% reported, **0% real** | 100% | 127 s | 516 | **regression**: refuses general questions; fix in E2b |
-| E2b | 2026-11-16 | Scope the "no tool" rule to business data (commit `2593805`, prompt `04126f5787d2`, `--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 52/66 (78.8%) | 78.8% | 0% | 66.7% | 12 s | 63 | acceptable for Gemini; **pending the Ollama run** |
+| E2b | 2026-11-16 | Scope the "no tool" rule to business data (commit `2593805`, prompt `04126f5787d2`, `--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 52/66 (78.8%) | 78.8% | 0% | 66.7% | 12 s | 63 | **kept** |
+| E2b | 2026-11-16 | Same prompt (commit `bbeb24b`, prompt `04126f5787d2`, 3 repeats) | ollama / qwen3:8b | 54/66 (81.8%); **52/66 real** (two gap passes are false positives) | 100% | 16.7% reported, **0% real** | 100% | 107 s | 464 | **kept as the common prompt**; 2 runs below E0', recovery expected from E3 |
 
 ### E1 notes: faster, but it guesses
 
@@ -177,10 +180,43 @@ explained by one known pattern, and the most harmful outcome gone:
 - One-run differences are within the sampling noise of this model (temperature is ignored), so
   the decision rests on the failure patterns, not on 53 vs 52.
 
+### E2b notes: the scoped "no tool" rule, Ollama
+
+Criteria set before the run: `no-tools` back to 100%, 54/54 outside the gap, `grounded_ids` and
+`tool_errors` at 100%. **Partly met.**
+
+- **Fixed:** "What is the capital of France?" answered 3/3 again. Latency back to E0' levels
+  (107 s; 91 s outside the gap), output tokens 464, the lowest so far.
+- **New regression: `customer-plan-by-id` 3/3 -> 1/3.** "What plan is customer C-004 on?" -> "The
+  available tools do not include a function to retrieve customer plan information", without
+  calling `search_customers`. The run that passed searched by id and found "enterprise". Same
+  mechanism as E2, one level down: the rule tells the model to say so when no tool provides the
+  data, and qwen3 decides that from the tool *names and descriptions* before trying. Nothing tells
+  it that `search_customers` accepts an id or returns the plan.
+- **False absence is back, worse.** Alice 3 of 3: "does not have any support tickets listed in our
+  system" (1 of 3 in E2, 0 in E0'). Two of those runs "pass" because the same answer quotes
+  "T-1001" as a format example, so the reported gap rate (16.7%) and pass rate (54/66) hide two
+  wrong answers: real 0% and 52/66. The absence rule covers failed or empty lookups; a field the
+  tool never returns is not covered, as with Gemini's Bruno in E2.
+- **An invented capability.** Bruno, 2 of 3: "I could show you all tickets for customer C-002",
+  a tool that does not exist. Not graded (no check for offered capabilities), but worth watching.
+- Unchanged and good: `grounded_ids`, `tool_errors`, `forbidden_tools`, `safety`, `write`,
+  `prompt-injection` 100%. Carla (pt) still answers without a lookup, 3 of 3.
+
+**Decision.** Keep the E2b prompt as the common prompt, and do not tune the prompt further for
+now. For Gemini it is the best prompt measured. For Ollama it is 2 real runs below E0', and both
+losses have the same cause: the model judges what the tools can do from their descriptions, and
+the descriptions say too little (that `search_customers` takes an id and returns the plan, and
+that it does not return tickets). That belongs in the tool descriptions (E3), where every
+client of the mcp-server gets it, not in more prompt rules, which on qwen3 have each moved a
+failure rather than removed it (E2: general questions; E2b: lookups by id). Rewording the prompt
+again against 22 cases would also start fitting the prompt to the dataset. If Ollama is still
+below E0' after E3, the next option is a prompt per provider, with its own experiment.
+
 ## Planned
 
 | # | Change | Where | Affects | Expected effect |
 |---|---|---|---|---|
-| E1b | `OLLAMA_REASONING=false` again, on top of E2b | `.env` | Ollama | Does an explicit rule replace thinking? Keep the speed only if `grounded_ids` and `write` hold |
-| E3 | Tool descriptions and errors in the mcp-server: customer ids (C-...) are not ticket ids; replace the real id used as an example (`T-1001`) with a format description; say that `search_customers` does not return tickets | mcp-server | both | Fewer `get_ticket_info("C-00N")` calls; no real id leaked through examples; no "no tickets" read from a missing field |
+| E3 | Tool descriptions and errors in the mcp-server: customer ids (C-...) are not ticket ids; replace the real id used as an example (`T-1001`) with a format description; say that `search_customers` accepts a name, email or customer id, returns the plan, and does not return tickets | mcp-server | both | Fewer `get_ticket_info("C-00N")` calls; no real id leaked through examples (no more false-positive gap passes); no "no tickets" read from a missing field; Ollama `customer-plan-by-id` back to 3/3 |
+| E1b | `OLLAMA_REASONING=false` again, on top of E3 | `.env` | Ollama | Does an explicit rule replace thinking? Keep the speed only if `grounded_ids` and `write` hold |
 | E4 | New `search_tickets` tool + dataset v6 (gap cases expect it) | mcp-server, dataset | both | Gap from 0% to near 100%; fewer steps and tokens in those cases |
