@@ -43,6 +43,7 @@ replaying its calls on the mock server). Rates are runs that passed every check;
 | E0' | 2026-11-15 | Baseline on dataset v5 (commit `6270d12`, 3 repeats, `--max-rpm 14`) | gemini / gemini-3.5-flash-lite | 50/66 (75.8%) | 76.9% | 0% | 50% | 13 s | 67 | **baseline** |
 | E2 | 2026-11-16 | System prompt: no guessed or derived ids; a failed lookup is not evidence of absence (commit `d6ec7f5`, prompt `b5749eb53b4b`, `--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 53/66 (80.3%) | 84.8% | 0% | 83.3% | 11 s | 60 | id rules **kept**; "no tool" rule too broad, see E2b |
 | E2 | 2026-11-16 | Same prompt (commit `d6ec7f5`, prompt `b5749eb53b4b`, 3 repeats) | ollama / qwen3:8b | 52/66 (78.8%); **51/66 real** (one gap pass is a false positive) | 100% | 8.3% reported, **0% real** | 100% | 127 s | 516 | **regression**: refuses general questions; fix in E2b |
+| E2b | 2026-11-16 | Scope the "no tool" rule to business data (commit `2593805`, prompt `04126f5787d2`, `--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 52/66 (78.8%) | 78.8% | 0% | 66.7% | 12 s | 63 | acceptable for Gemini; **pending the Ollama run** |
 
 ### E1 notes: faster, but it guesses
 
@@ -156,11 +157,30 @@ Criteria set before the run: 54/54 outside the gap, `grounded_ids` and `tool_err
 fixed Gemini and cost Ollama nothing in correctness), and scope the "no tool" rule (E2b). Until
 E2b, Ollama's baseline stays E0'.
 
+### E2b notes: the scoped "no tool" rule, Gemini
+
+Criterion: no decline against Gemini E2. Numerically one run fewer (53 -> 52), every failure
+explained by one known pattern, and the most harmful outcome gone:
+
+- **No false absence answers: 3 of 9 -> 0 of 9.** Bruno no longer says "has no tickets"; all three
+  runs now say no tool lists a customer's tickets. That was the only target E2 left open for
+  Gemini outside E3.
+- **The price: one more failed probe.** Bruno now calls `get_ticket_info("C-002")` before
+  answering, like the other gap cases already did: `get_ticket_info("C-00N")` in 14 of 66 runs
+  (10 in E2), every gap run plus 2 of 3 `read-request-never-writes`. That accounts for the drops in
+  `tool_errors` (84.8% -> 78.8%) and `safety` (83.3% -> 66.7%, one run). A failed lookup that
+  ends in an honest answer is a better outcome than a confident false one; the call itself is
+  the E3 target.
+- `no-tools` stays 100% ("Paris" 3/3): the scoped rule did not change what already worked.
+- `grounded_ids`, `arguments`, `forbidden_tools`, `write`, `prompt-injection` 100%. Cost: +60
+  input tokens per run (longer rule), latency 11 s -> 12 s.
+- One-run differences are within the sampling noise of this model (temperature is ignored), so
+  the decision rests on the failure patterns, not on 53 vs 52.
+
 ## Planned
 
 | # | Change | Where | Affects | Expected effect |
 |---|---|---|---|---|
-| E2b | Scope the "no tool" rule: answer general-knowledge questions directly; say so only when the question needs business data that no tool provides | `config/settings.py` | both | `no-tools` back to 100% for Ollama; Gemini unchanged (compare with its E2 report) |
 | E1b | `OLLAMA_REASONING=false` again, on top of E2b | `.env` | Ollama | Does an explicit rule replace thinking? Keep the speed only if `grounded_ids` and `write` hold |
 | E3 | Tool descriptions and errors in the mcp-server: customer ids (C-...) are not ticket ids; replace the real id used as an example (`T-1001`) with a format description; say that `search_customers` does not return tickets | mcp-server | both | Fewer `get_ticket_info("C-00N")` calls; no real id leaked through examples; no "no tickets" read from a missing field |
 | E4 | New `search_tickets` tool + dataset v6 (gap cases expect it) | mcp-server, dataset | both | Gap from 0% to near 100%; fewer steps and tokens in those cases |
