@@ -38,7 +38,12 @@ Repository = "https://github.com/jmpoliveira/ai-agent-service"
 Issues = "https://github.com/jmpoliveira/ai-agent-service/issues"
 
 [project.optional-dependencies]
+# Only for `python -m evals publish` (ADR 0006): never imported by the service or the image.
+evals = [
+  "arize-phoenix-client>=3.7,<4",
+]
 dev = [
+  "ai-agent-service[evals]",
   "pytest>=9,<10",
   "pytest-asyncio>=1.4,<2",
   "pytest-cov>=7,<8",

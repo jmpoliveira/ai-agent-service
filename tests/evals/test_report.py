@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from evals.report import ReportError, read_report, render, summarise, write_report
+from evals.report import (
+    ReportError,
+    load_saved_report,
+    parse_timestamp,
+    read_report,
+    render,
+    summarise,
+    write_report,
+)
 from tests.evals.helpers import record
 
 META: dict[str, Any] = {
@@ -135,3 +145,55 @@ def test_header_shows_commit_and_regrade_origin_and_tolerates_old_reports():
     assert "commit f810f03 (uncommitted changes)" in header
     assert "regraded from v3" in header
     assert old.startswith("Dataset tool_use v? (?) · ? / ?")
+
+
+def test_saved_runs_load_back_exactly_as_they_were_graded(tmp_path: Path):
+    # Arrange
+    started = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+    records = [replace(r, started_at=started) for r in _records()]
+    path = tmp_path / "report.json"
+    write_report(path, META, summarise(records), records)
+
+    # Act
+    saved = load_saved_report(path)
+
+    # Assert: same checks, errors, latencies and start times; tags come from the dataset
+    assert saved.meta == META
+    assert [r.checks for r in saved.records] == [r.checks for r in records]
+    assert [r.error for r in saved.records] == [r.error for r in records]
+    assert [r.started_at for r in saved.records] == [started] * 4
+    # provider and model are not saved per run: they come from the report's meta
+    original = records[0].trajectory
+    assert original is not None
+    assert saved.records[0].trajectory == replace(original, provider="ollama", model="qwen3:8b")
+    assert saved.records[0].tags == ()
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (None, "cannot read report"),
+        ("not json", "not an eval report"),
+        (
+            '{"meta": {"provider": "x", "model": "y"}, "runs": [{"case": "a"}]}',
+            "not an eval report",
+        ),
+    ],
+)
+def test_unreadable_saved_reports_are_reported(tmp_path: Path, content: str | None, message: str):
+    path = tmp_path / "report.json"
+    if content is not None:
+        path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(ReportError, match=message):
+        load_saved_report(path)
+
+
+def test_timestamps_are_parsed_as_utc_and_rejected_when_malformed():
+    assert parse_timestamp(None) is None
+    assert parse_timestamp("2026-11-17T12:00:00") == datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+    assert parse_timestamp("2026-11-17T12:00:00+00:00") == datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+    with pytest.raises(ValueError, match="not a timestamp"):
+        parse_timestamp(42)
+    with pytest.raises(ValueError, match="Invalid isoformat"):
+        parse_timestamp("yesterday")

@@ -6,11 +6,14 @@ import json
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import fmean
 from typing import Any, cast
 
+from evals.graders import Check
 from evals.runner import RunRecord
+from evals.trajectory import trajectory_from_report
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +104,61 @@ def read_report(path: Path) -> tuple[dict[str, Any], Summary]:
     except (json.JSONDecodeError, KeyError, TypeError) as err:
         raise ReportError(f"baseline {path} is not an eval report: {err}") from err
     return meta, summary
+
+
+@dataclass(frozen=True, slots=True)
+class SavedReport:
+    meta: dict[str, Any]
+    records: list[RunRecord]
+
+
+def load_saved_report(path: Path) -> SavedReport:
+    """Read every run of a report exactly as it was graded (checks included, no re-grading).
+
+    Tags are not saved per run: they come from the dataset, so they are left empty here.
+    """
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as err:
+        raise ReportError(f"cannot read report {path}: {err.strerror}") from err
+    except json.JSONDecodeError as err:
+        raise ReportError(f"{path} is not an eval report: {err}") from err
+    try:
+        meta = cast(dict[str, Any], document["meta"])
+        runs = cast(list[dict[str, Any]], document["runs"])
+        provider, model = str(meta["provider"]), str(meta["model"])
+        records = [_record_from_dict(run, provider, model) for run in runs]
+    except (KeyError, TypeError, ValueError) as err:
+        raise ReportError(f"{path} is not an eval report: {err}") from err
+    return SavedReport(meta, records)
+
+
+def parse_timestamp(value: object) -> datetime | None:
+    """An ISO 8601 timestamp from a report; naive values are taken as UTC."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"not a timestamp: {value!r}")
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _record_from_dict(run: Mapping[str, Any], provider: str, model: str) -> RunRecord:
+    saved = run["trajectory"]
+    checks = cast(list[dict[str, Any]], run["checks"])
+    return RunRecord(
+        case_id=str(run["case"]),
+        repeat=int(run["repeat"]),
+        tags=(),
+        checks=tuple(
+            Check(str(check["name"]), bool(check["passed"]), str(check.get("detail", "")))
+            for check in checks
+        ),
+        trajectory=None if saved is None else trajectory_from_report(saved, provider, model),
+        latency_seconds=float(run["latency_seconds"]),
+        error=run.get("error"),
+        started_at=parse_timestamp(run.get("started_at")),
+    )
 
 
 def render(
@@ -224,6 +282,7 @@ def _record_to_dict(record: RunRecord) -> dict[str, Any]:
         "passed": record.passed,
         "error": record.error,
         "latency_seconds": round(record.latency_seconds, 3),
+        "started_at": record.started_at.isoformat() if record.started_at else None,
         "checks": [asdict(check) for check in record.checks],
         "trajectory": None
         if trajectory is None

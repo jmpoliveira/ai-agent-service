@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from config.settings import Settings
+from config.settings import PhoenixSettings, Settings
 
 _BASE: dict[str, Any] = {
     "mcp_server_url": "http://mcp.test:3000/mcp",
@@ -19,7 +19,17 @@ def _clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tests must not depend on the developer's shell or .env file."""
     for name in list(__import__("os").environ):
         if name.startswith(
-            ("OLLAMA_", "GEMINI_", "ANTHROPIC_", "LLM_", "MCP_", "OTEL_", "AGENT_", "API_KEY")
+            (
+                "OLLAMA_",
+                "GEMINI_",
+                "ANTHROPIC_",
+                "LLM_",
+                "MCP_",
+                "OTEL_",
+                "AGENT_",
+                "API_KEY",
+                "PHOENIX_",
+            )
         ) or name in {"APP_ENV", "LOG_LEVEL", "LOG_LLM_CONTENT", "LOG_LLM_CONTENT_MAX_CHARS"}:
             monkeypatch.delenv(name)
 
@@ -184,3 +194,20 @@ def test_empty_environment_variables_count_as_unset(monkeypatch: pytest.MonkeyPa
 def test_numeric_limits_are_enforced(override: dict[str, Any]):
     with pytest.raises(ValidationError):
         _settings(**override)
+
+
+def test_phoenix_publishing_is_off_unless_a_base_url_is_set(monkeypatch: pytest.MonkeyPatch):
+    # Arrange: only the evals read these, and they need nothing else from the environment.
+    monkeypatch.setenv("PHOENIX_BASE_URL", "http://localhost:6006")
+    monkeypatch.setenv("PHOENIX_API_KEY", "phoenix-secret")
+
+    # Act
+    configured = PhoenixSettings(_env_file=None)  # type: ignore[call-arg]
+    monkeypatch.delenv("PHOENIX_BASE_URL")
+    unset = PhoenixSettings(_env_file=None)  # type: ignore[call-arg]
+
+    # Assert
+    assert str(configured.base_url) == "http://localhost:6006/"
+    assert configured.api_key is not None
+    assert "phoenix-secret" not in repr(configured)
+    assert unset.base_url is None

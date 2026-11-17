@@ -11,7 +11,7 @@ COMPOSE     := docker compose
 COMPOSE_ENV := docker compose -f docker-compose.yml -f docker-compose.docker-env.yml
 
 .PHONY: help venv install run run-log eval eval-log test test-unit cov lint format typecheck check \
-        docker-build up up-env down logs restart health clean regrade
+        docker-build up up-env down logs restart health clean regrade publish
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -49,6 +49,11 @@ eval-log:  ## Run the evals and also save the output to logs/eval-<timestamp>.lo
 # No model or server needed: re-scores the saved trajectories with the current dataset.
 regrade:  ## Score a saved report again with the current dataset: make regrade REPORT=<path>
 	$(PYTHON) -m evals regrade $(REPORT) $(ARGS)
+
+# Needs Phoenix running (docker-env) and PHOENIX_BASE_URL in .env; see ADR 0006.
+# To publish right after a run instead: make eval ARGS="--publish"
+publish:  ## Explore a saved report in Phoenix, case by case: make publish REPORT=<path>
+	$(PYTHON) -m evals publish $(REPORT) $(ARGS)
 
 # ---------- Quality ----------
 test:  ## Run the whole test suite (includes the in-process MCP integration tests)

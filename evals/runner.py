@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
 
 from evals.dataset import Case, Dataset
@@ -54,6 +55,8 @@ class RunRecord:
     latency_seconds: float
     # Set when the run raised instead of finishing (provider down, MCP unreachable...).
     error: str | None = None
+    # Wall-clock start (UTC). None in reports written before it was recorded.
+    started_at: datetime | None = None
 
     @property
     def passed(self) -> bool:
@@ -76,6 +79,7 @@ class EvalRunner:
         repeats: int,
         on_record: Callable[[RunRecord], None] | None = None,
         clock: Callable[[], float] = time.perf_counter,
+        now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if repeats < 1:
             raise ValueError("repeats must be at least 1")
@@ -84,7 +88,8 @@ class EvalRunner:
         self._provider = provider
         self._repeats = repeats
         self._on_record = on_record
-        self._clock = clock
+        self._clock = clock  # monotonic, for latency
+        self._now = now  # wall clock, to place each run on a timeline (traces, Phoenix)
 
     async def run(self, cases: Sequence[Case]) -> list[RunRecord]:
         records: list[RunRecord] = []
@@ -99,6 +104,7 @@ class EvalRunner:
 
     async def _run_once(self, agent: Agent, case: Case, repeat: int) -> RunRecord:
         started = self._clock()
+        started_at = self._now()
         try:
             run = await agent.execute(case.prompt, self._provider)
         except _ENVIRONMENT_ERRORS as err:
@@ -118,6 +124,7 @@ class EvalRunner:
                 trajectory=None,
                 latency_seconds=self._clock() - started,
                 error=type(err).__name__,
+                started_at=started_at,
             )
         trajectory = Trajectory.from_run(run)
         checks = grade(self._dataset.expectation_for(case), trajectory)
@@ -128,4 +135,5 @@ class EvalRunner:
             checks=tuple(checks),
             trajectory=trajectory,
             latency_seconds=self._clock() - started,
+            started_at=started_at,
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -88,3 +89,23 @@ async def test_a_broken_environment_aborts_the_whole_eval():
 def test_repeats_must_be_positive():
     with pytest.raises(ValueError, match="at least 1"):
         EvalRunner(dataset(case()), lambda _: make_agent([]), provider=None, repeats=0)
+
+
+async def test_each_run_records_when_it_started_including_failed_runs():
+    # Arrange: a wall clock that advances one minute per reading
+    start = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+    minutes = iter(range(10))
+    data = dataset(case("a"))
+    runner = EvalRunner(
+        data,
+        lambda _: make_agent([LLMUnavailableError("down"), reply("ok")]),
+        provider=None,
+        repeats=2,
+        now=lambda: start + timedelta(minutes=next(minutes)),
+    )
+
+    # Act
+    records = await runner.run(data.cases)
+
+    # Assert
+    assert [r.started_at for r in records] == [start, start + timedelta(minutes=1)]

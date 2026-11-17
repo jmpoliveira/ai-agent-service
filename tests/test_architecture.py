@@ -106,3 +106,20 @@ def test_the_guard_actually_detects_a_violation(tmp_path: Path):
 
     # Assert
     assert {"fastapi", "src.infrastructure.mcp"} <= found
+
+
+def test_the_phoenix_client_is_confined_to_its_adapter():
+    # Phoenix is one way to view eval results (ADR 0006): replacing it, or adding another
+    # sink, must touch one module. And the service must never need it.
+    adapter = ROOT / "evals" / "phoenix_sink.py"
+    offenders = [
+        f"{p.relative_to(ROOT)}: {m}"
+        for folder in ("src", "config", "evals")
+        for p in sorted((ROOT / folder).rglob("*.py"))
+        if p != adapter
+        for m in _imports(p)
+        if m.split(".")[0] == "phoenix"
+    ]
+    offenders += [f"main.py: {m}" for m in _imports(ROOT / "main.py") if m.startswith("phoenix")]
+    assert offenders == []
+    assert any(m.startswith("phoenix") for m in _imports(adapter))  # the guard is not vacuous

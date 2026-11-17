@@ -17,7 +17,7 @@ from typing import Any, cast
 
 from evals.dataset import Dataset
 from evals.graders import grade
-from evals.report import ReportError
+from evals.report import ReportError, parse_timestamp
 from evals.runner import RunRecord
 from evals.trajectory import trajectory_from_report
 
@@ -58,6 +58,7 @@ def regrade(document: Mapping[str, Any], dataset: Dataset, source: str) -> Regra
                         trajectory=None,
                         latency_seconds=float(run["latency_seconds"]),
                         error=run["error"],
+                        started_at=parse_timestamp(run.get("started_at")),
                     )
                 )
                 continue
@@ -70,6 +71,7 @@ def regrade(document: Mapping[str, Any], dataset: Dataset, source: str) -> Regra
                     checks=tuple(grade(dataset.expectation_for(case), trajectory)),
                     trajectory=trajectory,
                     latency_seconds=float(run["latency_seconds"]),
+                    started_at=parse_timestamp(run.get("started_at")),
                 )
             )
         except (KeyError, TypeError, ValueError) as err:

@@ -169,8 +169,11 @@ mcp-server mock data: customer lookup, tickets by id, tickets of a customer, no-
 a write, and safety cases including a prompt injection planted in a tool result. Each case runs
 several times; the report gives pass rates per check and per tag, cost and latency, the trace id
 of every run, and a comparison with a baseline. Write tools are stubbed, so evals never change
-the server's data. How to run and extend them: [evals/README.md](evals/README.md); design:
-[ADR 0005](docs/adr/0005-evals.md).
+the server's data. Any report can be published to [Arize Phoenix](https://github.com/Arize-ai/phoenix)
+(`make publish REPORT=...`, or `--publish` on a run) to follow each case end to end, from the
+prompt to the failed check and its trace, and to compare runs case by case. How to run and
+extend them: [evals/README.md](evals/README.md); design: [ADR 0005](docs/adr/0005-evals.md),
+[ADR 0006](docs/adr/0006-eval-results-in-phoenix.md).
 
 ## Docker
 
@@ -212,11 +215,11 @@ tools, tracing) is done.
 
 | # | Capability | What | Why at this point |
 |---|---|---|---|
-| 1 | **Evals and tool design** | Harness, dataset and first baselines done (Ollama, Gemini; see [EXPERIMENTS.md](evals/EXPERIMENTS.md)); next: Claude baseline, then `search_tickets` in the mcp-server measured against them | Every later change is measured against this |
+| 1 | **Evals and tool design** | Harness, dataset and first baselines done (Ollama, Gemini; see [EXPERIMENTS.md](evals/EXPERIMENTS.md)); results explorable in Phoenix ([ADR 0006](docs/adr/0006-eval-results-in-phoenix.md)); next: Claude baseline, then `search_tickets` in the mcp-server measured against them | Every later change is measured against this |
 | 2 | **Azure OpenAI provider** | A fourth `ChatModel` adapter, usable in `LLM_FALLBACKS` and measured in the eval baselines | The most common enterprise AI platform; the port makes it a small, contained change |
 | 3 | **RAG** | Retrieval from the RAG services (their own repositories, with their own deployment lifecycle) exposed as a `search_knowledge_base` MCP tool; retrieval and answer evals (recall@k, faithfulness with an LLM judge) | Retrieval is a read-only tool on the existing path, so no architecture change. Documents are untrusted input: results go through the same sanitisation, and the injection eval cases cover them |
 | 4 | **Guardrails and security I** | Human confirmation for write tools (MCP elicitation), per-tool permissions, input/output guardrails (injection, PII), rate limiting, request size limits; checked against the OWASP Top 10 for LLM applications | The agent can already change data, and the safety eval cases show where models fail |
-| 5 | **LLM observability and cost** | Cost, latency and tokens per run as OpenTelemetry metrics; the existing spans exported to Langfuse over OTLP (no SDK); provider prompt caching, measured | Caching, routing and budgets need these numbers |
+| 5 | **LLM observability and cost** | Cost, latency and tokens per run as OpenTelemetry metrics; the existing spans already reach Phoenix through the collector (ADR 0006), so this step adds metrics, cost and online monitoring; provider prompt caching, measured | Caching, routing and budgets need these numbers |
 | 6 | **Stateful loop and context memory** | A LangGraph loop strategy as a new use case next to `RunAgent`, behind the same ports and chosen by config; checkpointed sessions in a store (the service stays stateless); human-in-the-loop interrupts reusing step 4. Demo use case: an AI-assisted architecture impact assessment, with domain tools in the mcp-server | Resumable runs and confirmations are the point where LangGraph pays off ([ADR 0001](docs/adr/0001-architecture.md)); the evals compare it with the explicit loop. Memory stores untrusted text (memory poisoning), so it comes after guardrails |
 | 7 | **Caching** | Read-only tool results -> embeddings -> semantic cache last | Ordered from safest to riskiest; a semantic cache can return a wrong answer for a similar question |
 | 8 | **Streaming and structured outputs** | SSE responses, typed final answers | Needs a consumer to be worth its complexity |

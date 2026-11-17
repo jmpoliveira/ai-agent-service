@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -123,3 +125,16 @@ def test_regrade_says_when_grounded_ids_cannot_be_checked(tmp_path: Path):
 
     assert result.records[0].passed
     assert any("grounded_ids not checked" in note for note in result.notes)
+
+
+def test_regrading_keeps_when_each_run_started(tmp_path: Path):
+    started = datetime(2026, 11, 17, 12, 0, tzinfo=UTC)
+    records = [
+        replace(_record("a", "done"), started_at=started),
+        replace(_record("a", "", error="LLMUnavailableError"), started_at=started),
+    ]
+    document = _saved_report(tmp_path, records)
+
+    result = regrade(document, dataset(case("a")), "report.json")
+
+    assert [r.started_at for r in result.records] == [started, started]

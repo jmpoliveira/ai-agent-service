@@ -3,20 +3,34 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import sys
 import warnings
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 import evals.__main__ as cli
-from config.settings import Settings
-from evals.__main__ import EXIT_BELOW_THRESHOLD, EXIT_OK, EXIT_USAGE, parse_args, run_evals
+from config.settings import PhoenixSettings, Settings
+from evals.__main__ import (
+    EXIT_BELOW_THRESHOLD,
+    EXIT_OK,
+    EXIT_PUBLISH_FAILED,
+    EXIT_USAGE,
+    parse_args,
+    run_evals,
+)
+from evals.dataset import load_dataset
 from evals.runner import Agent
+from evals.sink import EvalResults, Published, ResultSink, SinkError, SinkFactory
 from src.domain.messages import ToolCall
 from src.infrastructure.llm.resilience import RateLimitedChatModel
 from tests.evals.helpers import case, dataset, make_agent
+from tests.evals.phoenix_fake import FakePhoenix
 from tests.fakes import reply
 
 META: dict[str, Any] = {
@@ -242,6 +256,11 @@ def test_each_parser_only_accepts_its_own_command():
         parse_args(["regrade", "r.json"])
     with pytest.raises(SystemExit):
         cli.parse_regrade_args(["run"])
+    with pytest.raises(SystemExit):
+        cli.parse_publish_args(["run"])
+    assert cli.parse_publish_args(["publish", "r.json"]).dataset == Path(
+        "evals/datasets/tool_use.toml"
+    )
 
 
 def _no_program(_: str) -> None:
@@ -259,3 +278,214 @@ def test_git_revision_describes_the_checkout(tmp_path: Path, monkeypatch: pytest
     # No git installed.
     monkeypatch.setattr(cli.shutil, "which", _no_program)
     assert cli.git_revision() == {"git_commit": None, "git_dirty": None}
+
+
+# ---------------------------------------------------------------------------------------
+# Publishing (ADR 0006)
+# ---------------------------------------------------------------------------------------
+DATASET_TOML = (
+    'name = "d"\nversion = 1\n'
+    '[[cases]]\nid = "capital"\nprompt = "Capital of France?"\ntags = ["geo"]\n'
+    '[cases.expect]\nno_tools = true\nanswer_contains = ["Paris"]\n'
+)
+
+
+@dataclass
+class RecordingSink:
+    published: list[EvalResults] = field(default_factory=list[EvalResults])
+    fail: bool = False
+
+    async def publish(self, results: EvalResults) -> Published:
+        if self.fail:
+            raise SinkError("phoenix is down")
+        self.published.append(results)
+        return Published("http://phoenix.test/datasets/1/compare", created=True)
+
+
+def _open(sink: RecordingSink) -> SinkFactory:
+    @asynccontextmanager
+    async def open_sink() -> AsyncGenerator[ResultSink, None]:
+        yield sink
+
+    return open_sink
+
+
+def _paris_agent(_: Mapping[str, str]) -> Agent:
+    return make_agent([reply("Paris"), reply("Paris")])  # one reply per repeat
+
+
+def _saved_report(tmp_path: Path) -> tuple[Path, Path]:
+    """A real report written by run_evals, and the dataset file that graded it."""
+    data_file = tmp_path / "d.toml"
+    data_file.write_text(DATASET_TOML, encoding="utf-8")
+    data = load_dataset(data_file)
+    meta = {**META, "dataset": "d", "dataset_fingerprint": data.fingerprint}
+    options = parse_args(["run", "--repeats", "2", "--output-dir", str(tmp_path / "out")])
+    assert asyncio.run(run_evals(options, data, _paris_agent, meta, io.StringIO())) == EXIT_OK
+    [report] = (tmp_path / "out").glob("*.json")
+    return report, data_file
+
+
+def test_publish_sends_the_saved_runs_with_the_dataset_tags(tmp_path: Path):
+    # Arrange
+    report, data_file = _saved_report(tmp_path)
+    sink = RecordingSink()
+    out = io.StringIO()
+    options = cli.parse_publish_args(["publish", str(report), "--dataset", str(data_file)])
+
+    # Act
+    code = cli.publish_report(options, _open(sink), out)
+
+    # Assert
+    assert code == EXIT_OK, out.getvalue()
+    assert "Published: http://phoenix.test/datasets/1/compare" in out.getvalue()
+    [results] = sink.published
+    assert results.report_name == report.name
+    assert [(r.case_id, r.repeat, r.tags, r.passed) for r in results.records] == [
+        ("capital", 1, ("geo",), True),
+        ("capital", 2, ("geo",), True),
+    ]
+    assert all(r.started_at is not None for r in results.records)
+
+
+def test_publish_refuses_a_report_graded_by_another_dataset(tmp_path: Path):
+    # Arrange: the dataset changed after the report was written.
+    report, data_file = _saved_report(tmp_path)
+    data_file.write_text(DATASET_TOML.replace('"Paris"', '"Paris", "France"'), encoding="utf-8")
+    sink = RecordingSink()
+    out = io.StringIO()
+    options = cli.parse_publish_args(["publish", str(report), "--dataset", str(data_file)])
+
+    # Act
+    code = cli.publish_report(options, _open(sink), out)
+
+    # Assert
+    assert code == EXIT_USAGE
+    assert "Regrade it first" in out.getvalue()
+    assert sink.published == []
+
+
+@pytest.mark.parametrize(
+    ("report_content", "dataset_ok", "message"),
+    [("not json", True, "not an eval report"), ("{}", False, "cannot read dataset")],
+)
+def test_publish_reports_unreadable_input(
+    tmp_path: Path, report_content: str, dataset_ok: bool, message: str
+):
+    report = tmp_path / "r.json"
+    report.write_text(report_content, encoding="utf-8")
+    data_file = tmp_path / "d.toml"
+    if dataset_ok:
+        data_file.write_text(DATASET_TOML, encoding="utf-8")
+    out = io.StringIO()
+    options = cli.parse_publish_args(["publish", str(report), "--dataset", str(data_file)])
+
+    assert cli.publish_report(options, _open(RecordingSink()), out) == EXIT_USAGE
+    assert message in out.getvalue()
+
+
+def test_a_failed_publish_has_its_own_exit_code(tmp_path: Path):
+    report, data_file = _saved_report(tmp_path)
+    out = io.StringIO()
+    options = cli.parse_publish_args(["publish", str(report), "--dataset", str(data_file)])
+
+    code = cli.publish_report(options, _open(RecordingSink(fail=True)), out)
+
+    assert code == EXIT_PUBLISH_FAILED
+    assert "Publishing failed: phoenix is down" in out.getvalue()
+
+
+def test_run_with_publish_publishes_the_report_it_wrote(tmp_path: Path):
+    data = dataset(case("a", expect={"answer_contains": ["Paris"]}))
+    sink = RecordingSink()
+    out = io.StringIO()
+    options = parse_args(["run", "--repeats", "1", "--output-dir", str(tmp_path), "--publish"])
+
+    code = asyncio.run(run_evals(options, data, _paris_agent, META, out, _open(sink)))
+
+    assert code == EXIT_OK
+    [report] = tmp_path.glob("*.json")
+    assert [r.report_name for r in sink.published] == [report.name]
+    assert sink.published[0].meta["repeats"] == 1
+
+
+async def test_a_failed_publish_does_not_change_the_eval_result(tmp_path: Path):
+    # The report is saved and the scores stand; publishing is only a view of them.
+    data = dataset(case("a", expect={"answer_contains": ["Paris"]}))
+    out = io.StringIO()
+    options = parse_args(["run", "--repeats", "1", "--output-dir", str(tmp_path), "--publish"])
+
+    code = await run_evals(options, data, _paris_agent, META, out, _open(RecordingSink(fail=True)))
+
+    assert code == EXIT_OK
+    assert "Publishing failed: phoenix is down" in out.getvalue()
+    assert "Publish it later with: python -m evals publish" in out.getvalue()
+
+
+def _phoenix(**values: Any) -> Any:
+    def settings() -> PhoenixSettings:
+        return PhoenixSettings(_env_file=None, **values)  # type: ignore[call-arg]
+
+    return settings
+
+
+@pytest.mark.parametrize("command", [["publish", "r.json"], ["run", "--publish"]])
+def test_publishing_without_a_phoenix_url_fails_before_any_work(
+    monkeypatch: pytest.MonkeyPatch, command: list[str]
+):
+    # Arrange: a run would fail on these settings; it must never get that far.
+    monkeypatch.setattr(cli, "get_phoenix_settings", _phoenix())
+    monkeypatch.setattr(cli, "get_settings", _settings)
+    monkeypatch.setattr(cli, "configure_logging", _no_logging)
+    out = io.StringIO()
+
+    # Act
+    code = cli.main(command, out)
+
+    # Assert
+    assert code == EXIT_USAGE
+    assert "Cannot publish: PHOENIX_BASE_URL is not set" in out.getvalue()
+
+
+def test_the_sink_factory_explains_a_missing_extra_and_invalid_settings(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # A missing optional dependency: importing the adapter fails.
+    monkeypatch.setattr(cli, "get_phoenix_settings", _phoenix(base_url="http://phoenix.test"))
+    monkeypatch.setitem(sys.modules, "evals.phoenix_sink", None)
+    with pytest.raises(SinkError, match=r"pip install -e '\.\[evals\]'"):
+        cli.phoenix_sink_factory()
+
+    # A malformed URL in .env.
+    monkeypatch.setattr(cli, "get_phoenix_settings", _phoenix(base_url="not a url"))
+    with pytest.raises(SinkError, match="invalid Phoenix settings"):
+        cli.phoenix_sink_factory()
+
+
+def test_publish_end_to_end_through_the_real_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    # Arrange: main -> factory -> PhoenixSink -> phoenix.client -> HTTP -> fake Phoenix.
+    report, data_file = _saved_report(tmp_path)
+    fake = FakePhoenix()
+    real_client = httpx.AsyncClient
+
+    def client_on_fake(**kwargs: Any) -> httpx.AsyncClient:
+        return real_client(**kwargs, transport=httpx.MockTransport(fake.handle))
+
+    monkeypatch.setattr("evals.phoenix_sink.httpx.AsyncClient", client_on_fake)
+    monkeypatch.setattr(cli, "get_phoenix_settings", _phoenix(base_url="http://phoenix.test:6006"))
+    out = io.StringIO()
+
+    # Act
+    code = cli.main(["publish", str(report), "--dataset", str(data_file)], out)
+    again = cli.main(["publish", str(report), "--dataset", str(data_file)], out)
+
+    # Assert
+    assert (code, again) == (EXIT_OK, EXIT_OK), out.getvalue()
+    assert "Published: http://phoenix.test:6006/datasets/ds-1/compare?experimentId=exp-1" in (
+        out.getvalue()
+    )
+    assert "Already published" in out.getvalue()
+    assert len(fake.runs) == 2
+    assert {e["name"] for e in fake.evaluations} == {"no_tools", "answer", "stop_reason", "passed"}

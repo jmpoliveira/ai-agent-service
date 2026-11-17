@@ -45,13 +45,16 @@ inside `ARGS`: both would be passed, and the last one (from `ARGS`) would silent
 | `--max-rpm N` | no limit | At most N model requests per minute (see "Provider quotas" below) |
 | `--fail-under RATE` | none | Exit with code 1 when the run pass rate is below RATE (0 to 1), for a CI gate |
 | `--verbose` | off | Show the service logs (`APP_ENV` profile) instead of the quiet profile |
+| `--publish` | off | After the report is written, publish it to Phoenix (see "Exploring results in Phoenix") |
 
 Tags in `tool_use.toml`: `customer-lookup`, `ticket-by-id`, `customer-tickets`, `no-tools`,
 `write`, `safety`, `prompt-injection`, `not-found`, `portuguese`.
 
 Exit codes: `0` finished, `1` below `--fail-under`, `2` invalid options, settings or dataset,
 or the eval was aborted because the environment is broken (MCP server down, bad credentials,
-unknown provider, model without tool support).
+unknown provider, model without tool support), `3` `publish` could not reach Phoenix. With
+`run --publish`, a failed publish is reported but does not change the exit code: the report
+is saved and the result stands.
 
 Examples:
 
@@ -85,8 +88,8 @@ LOG_LLM_CONTENT=true make eval-log PROVIDER=gemini REPEATS=1 ARGS="--verbose --c
 Each run prints its progress, a summary table and the path of a JSON report in
 `evals/results/` (git-ignored). The report holds the settings (provider, model, temperature,
 dataset fingerprint, system prompt fingerprint) and every run: the prompt, the tool calls the
-model asked for with the result of each, its answer, the checks, and the **trace id**, so any
-failure can be opened in Jaeger. Reports therefore contain tool data: with the mock server that
+model asked for with the result of each, its answer, the checks, when each run started, and the
+**trace id**, so any failure can be opened in Jaeger or explored in Phoenix (below). Reports therefore contain tool data: with the mock server that
 is harmless, but never commit a report produced against real customer data.
 
 To keep a result as a baseline, copy its report to `evals/baselines/` and commit it.
@@ -118,6 +121,44 @@ the graded content, so comments and formatting do not change it.
 
 **Experiments.** The method and the log of every change measured so far are in
 [EXPERIMENTS.md](EXPERIMENTS.md).
+
+## Exploring results in Phoenix
+
+The JSON report is complete but hard to read. Published to
+[Arize Phoenix](https://github.com/Arize-ai/phoenix) (runs in `docker-env`, profile
+`observability`), each case can be followed end to end: prompt -> expectation -> tool calls and
+results -> answer -> every check with its detail -> the trace. Runs of the same dataset can be
+compared side by side, case by case. Why Phoenix, and the alternatives: [ADR 0006](../docs/adr/0006-eval-results-in-phoenix.md).
+
+```bash
+make eval PROVIDER=ollama ARGS="--publish"        # run, save the report, publish it
+make publish REPORT=evals/baselines/20261117-122225-gemini-tool_use.json   # any saved report
+```
+
+Both print the URL of the experiment's comparison view. Setup: Phoenix running,
+`PHOENIX_BASE_URL=http://localhost:6006` in `.env` (and `PHOENIX_API_KEY` only if its
+authentication is on), and the client installed (`make install` does it; it is the optional
+`.[evals]` extra, so the service and its image never need it). Run the eval with
+`OTEL_ENABLED=true` and the exporter pointing at the `docker-env` collector, so the traces
+reach Phoenix too and each run links to its trace.
+
+| Phoenix | Comes from |
+|---|---|
+| Dataset `<name>-v<version>-<fingerprint>` | The dataset file. One per set of grading rules, so only comparable runs are compared |
+| Example | A case: the prompt (input), the expectation with defaults (output), case id, tags, stubbed tools (metadata) |
+| Experiment | A report: provider, model, temperature, prompt fingerprint, commit, report name |
+| Run | One repeat of a case: answer, tool calls with their results, latency, tokens, trace id |
+| Evaluations | One per check (score 1/0, label pass/fail, the check's detail) plus the overall `passed` |
+
+Publishing **records** what the runner produced; Phoenix never runs the agent. So old
+baselines can be published, the same report is published only once (a second attempt prints
+"Already published"), and a report graded by an older dataset is refused: regrade it first,
+then publish the regraded report.
+
+Each run's trace opens from the run itself (the trace icon in the comparison view). The
+experiment's own project (`Experiment-<id>`, under Projects) stays empty: Phoenix creates it for
+tasks it runs itself, and ours run in the eval runner, with their traces in the project the
+collector sends them to.
 
 ## How it works
 

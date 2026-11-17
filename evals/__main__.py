@@ -1,5 +1,6 @@
-"""Command line: ``python -m evals run --provider ollama --repeats 3``, and
-``python -m evals regrade <report>`` to score a saved report again with the current dataset.
+"""Command line: ``python -m evals run --provider ollama --repeats 3``,
+``python -m evals regrade <report>`` to score a saved report again with the current dataset, and
+``python -m evals publish <report>`` to explore a report in Phoenix (ADR 0006).
 
 Uses the same settings (.env) and composition root as the service, so the agent under test
 is the agent you deploy. Each run is a normal traced run: its trace id is in the report.
@@ -25,12 +26,20 @@ from typing import Any, TextIO
 from pydantic import ValidationError
 
 from config.log_setup import configure_logging
-from config.settings import Settings, get_settings
+from config.settings import Settings, get_phoenix_settings, get_settings
 from config.telemetry import setup_telemetry
 from evals.dataset import Dataset, DatasetError, load_dataset
 from evals.regrade import regrade
-from evals.report import ReportError, read_report, render, summarise, write_report
+from evals.report import (
+    ReportError,
+    load_saved_report,
+    read_report,
+    render,
+    summarise,
+    write_report,
+)
 from evals.runner import Agent, AgentFactory, EvalAbortedError, EvalRunner, RunRecord
+from evals.sink import EvalResults, SinkError, SinkFactory
 from evals.stubs import StubbingToolGatewayProvider
 from main import build_chat_models, build_run_agent, build_tool_provider
 from src.application.ports import ChatModel
@@ -42,6 +51,7 @@ DEFAULT_OUTPUT_DIR = Path("evals/results")
 EXIT_OK = 0
 EXIT_BELOW_THRESHOLD = 1
 EXIT_USAGE = 2
+EXIT_PUBLISH_FAILED = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +66,13 @@ class EvalOptions:
     fail_under: float | None
     verbose: bool
     max_rpm: int | None = None
+    publish: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class PublishOptions:
+    report: Path
+    dataset: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +102,11 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         help="at most this many model requests per minute (stay under a provider quota)",
     )
+    run.add_argument(
+        "--publish",
+        action="store_true",
+        help="also publish the report to Phoenix (PHOENIX_BASE_URL), see `publish`",
+    )
     again = commands.add_parser(
         "regrade", help="score a saved report again with the dataset (no model calls)"
     )
@@ -92,6 +114,13 @@ def _parser() -> argparse.ArgumentParser:
     again.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     again.add_argument(
         "--output", type=Path, help="where to write it (default: next to the report, .v<N>.json)"
+    )
+    share = commands.add_parser(
+        "publish", help="publish a saved report to Phoenix to explore it case by case"
+    )
+    share.add_argument("report", type=Path, help="report JSON written by `run` or `regrade`")
+    share.add_argument(
+        "--dataset", type=Path, default=DEFAULT_DATASET, help="the dataset that graded it"
     )
     return parser
 
@@ -118,7 +147,16 @@ def parse_args(argv: Sequence[str]) -> EvalOptions:
         fail_under=args.fail_under,
         verbose=args.verbose,
         max_rpm=args.max_rpm,
+        publish=args.publish,
     )
+
+
+def parse_publish_args(argv: Sequence[str]) -> PublishOptions:
+    parser = _parser()
+    args = parser.parse_args(list(argv))
+    if args.command != "publish":
+        parser.error("expected the publish command")
+    return PublishOptions(report=args.report, dataset=args.dataset)
 
 
 def parse_regrade_args(argv: Sequence[str]) -> RegradeOptions:
@@ -157,12 +195,73 @@ def regrade_report(options: RegradeOptions, out: TextIO) -> int:
     return EXIT_OK
 
 
+def phoenix_sink_factory() -> SinkFactory:
+    """How to open the Phoenix sink, checked before any work is done.
+
+    Imported here and not at the top: the Phoenix client is an optional dependency (the
+    ``evals`` extra), and ``run`` and ``regrade`` must work without it.
+    """
+    try:
+        settings = get_phoenix_settings()
+    except ValidationError as err:
+        raise SinkError(f"invalid Phoenix settings (check your .env):\n{err}") from err
+    if settings.base_url is None:
+        raise SinkError("PHOENIX_BASE_URL is not set: there is nowhere to publish to")
+    try:
+        from evals.phoenix_sink import open_phoenix_sink
+    except ImportError as err:
+        raise SinkError(
+            f"the Phoenix client is not installed ({err.name}): pip install -e '.[evals]'"
+        ) from err
+    return lambda: open_phoenix_sink(settings)
+
+
+async def publish_results(results: EvalResults, open_sink: SinkFactory, out: TextIO) -> bool:
+    """Publish one report. A failure is reported, never raised: the report is already saved."""
+    try:
+        async with open_sink() as sink:
+            published = await sink.publish(results)
+    except SinkError as err:
+        print(f"Publishing failed: {err}", file=out)
+        return False
+    verb = "Published" if published.created else "Already published"
+    print(f"{verb}: {published.url}", file=out)
+    return True
+
+
+def publish_report(options: PublishOptions, open_sink: SinkFactory, out: TextIO) -> int:
+    """Publish a saved report. Needs no model, MCP server or service settings."""
+    try:
+        dataset = load_dataset(options.dataset)
+        saved = load_saved_report(options.report)
+    except (DatasetError, ReportError) as err:
+        print(str(err), file=out)
+        return EXIT_USAGE
+    graded_with = saved.meta.get("dataset_fingerprint")
+    if graded_with != dataset.fingerprint:
+        # Phoenix would show these runs next to the dataset's current expectations, which did
+        # not grade them. Regrading first makes the checks and the expectations agree.
+        print(
+            f"{options.report} was graded with dataset fingerprint {graded_with}, but "
+            f"{options.dataset} is {dataset.fingerprint}. Regrade it first "
+            f"(python -m evals regrade {options.report}) and publish the regraded report.",
+            file=out,
+        )
+        return EXIT_USAGE
+    tags = {case.id: case.tags for case in dataset.cases}
+    records = [replace(r, tags=tags.get(r.case_id, ())) for r in saved.records]
+    results = EvalResults(dataset, saved.meta, records, options.report.name)
+    published = asyncio.run(publish_results(results, open_sink, out))
+    return EXIT_OK if published else EXIT_PUBLISH_FAILED
+
+
 async def run_evals(
     options: EvalOptions,
     dataset: Dataset,
     agent_for: AgentFactory,
     meta: Mapping[str, Any],
     out: TextIO,
+    open_sink: SinkFactory | None = None,
 ) -> int:
     """Run, report and decide the exit code. Separate from ``main`` so it can be tested."""
     baseline_meta, baseline = read_report(options.baseline) if options.baseline else (None, None)
@@ -212,6 +311,11 @@ async def run_evals(
     print("", file=out)
     print(render(full_meta, summary, records, baseline, baseline_meta), file=out)
     print(f"\nReport: {path}", file=out)
+    if options.publish and open_sink is not None:
+        results = EvalResults(dataset, full_meta, records, path.name)
+        if not await publish_results(results, open_sink, out):
+            # The eval result stands; publishing is only a view of it.
+            print(f"Publish it later with: python -m evals publish {path}", file=out)
     if options.fail_under is not None and summary.pass_rate < options.fail_under:
         print(f"Run pass rate is below --fail-under {options.fail_under:.2f}", file=out)
         return EXIT_BELOW_THRESHOLD
@@ -256,11 +360,31 @@ def git_revision(cwd: Path | None = None) -> dict[str, Any]:
     return {"git_commit": commit, "git_dirty": bool(status.strip())}
 
 
+def _publish_command(arguments: Sequence[str], out: TextIO) -> int:
+    options = parse_publish_args(arguments)
+    try:
+        open_sink = phoenix_sink_factory()
+    except SinkError as err:
+        print(f"Cannot publish: {err}", file=out)
+        return EXIT_USAGE
+    return publish_report(options, open_sink, out)
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] == ["regrade"]:
         return regrade_report(parse_regrade_args(arguments), out)
+    if arguments[:1] == ["publish"]:
+        return _publish_command(arguments, out)
     options = parse_args(arguments)
+    open_sink: SinkFactory | None = None
+    if options.publish:
+        # Fail before a long run, not after it.
+        try:
+            open_sink = phoenix_sink_factory()
+        except SinkError as err:
+            print(f"Cannot publish: {err}", file=out)
+            return EXIT_USAGE
     try:
         settings = get_settings()
     except ValidationError as err:
@@ -298,7 +422,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO = sys.stdout) -> int:
     options = replace(options, provider=provider)  # the report always names the real provider
     shutdown_telemetry = setup_telemetry(settings)
     try:
-        return asyncio.run(run_evals(options, dataset, agent_for, meta, out))
+        return asyncio.run(run_evals(options, dataset, agent_for, meta, out, open_sink))
     except (EvalAbortedError, ReportError) as err:
         print(f"Eval aborted: {err}", file=out)
         return EXIT_USAGE
