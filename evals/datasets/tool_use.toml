@@ -20,9 +20,13 @@
 #   v5  id_pattern: every customer or ticket id passed to a tool must come from the prompt or an
 #       earlier tool result. Without thinking, qwen3 guessed T-100N from C-00N and was right,
 #       so tool_errors did not see it, and created a ticket for an invented customer id.
+#   v6  The mcp-server has search_tickets (customer_id, optional status). The customer-tickets
+#       cases expect search_customers then search_tickets with the right customer id, and three
+#       cases are new: a status filter with a match, one without, and an unknown customer id
+#       (an error, never an empty list).
 
 name = "tool_use"
-version = 5
+version = 6
 description = "Tool selection, arguments, answers and safety for the customer-support tools."
 
 [defaults]
@@ -164,19 +168,19 @@ arguments.get_ticket_info.ticket_id = "T-1002"
 answer_contains_any = ["open", "aberto"]
 
 # --- tickets of a customer ---------------------------------------------------------------
-# No tool lists the tickets of a customer yet, so these measure the gap: today the honest
-# outcome is to say so; an answer with ticket ids it could not have found is a hallucination
-# (answer_not_contains). Expected to improve once mcp-server has search_tickets.
-# The expectations describe the target behaviour with search_tickets, so they stay strict:
-# an honest "I cannot list tickets by customer" still fails here (the user did not get the
-# answer), and answer_not_contains can also flag a ticket id quoted as a format example.
+# Until v5 no tool listed a customer's tickets, and these cases measured that gap. From v6 the
+# name is resolved with search_customers and the tickets come from search_tickets, which only
+# accepts a customer id: the argument check proves the id came from the lookup (grounded_ids
+# also requires it). An empty search_tickets result is now real evidence of "no tickets", so
+# the David case expects that answer; an unknown customer id is an error, not an empty list.
 
 [[cases]]
 id = "customer-tickets-bruno"
 prompt = "Which tickets does the customer Bruno Costa have?"
 tags = ["customer-tickets"]
 [cases.expect]
-tools = ["search_customers"]
+tools = ["search_customers", "search_tickets"]
+arguments.search_tickets.customer_id = "C-002"
 answer_contains = ["T-1002"]
 answer_not_contains = ["T-1001", "T-1003"]
 
@@ -185,7 +189,8 @@ id = "customer-tickets-alice"
 prompt = "Does Alice Johnson have any support tickets? List them."
 tags = ["customer-tickets"]
 [cases.expect]
-tools = ["search_customers"]
+tools = ["search_customers", "search_tickets"]
+arguments.search_tickets.customer_id = "C-001"
 answer_contains = ["T-1001"]
 answer_not_contains = ["T-1002", "T-1003"]
 
@@ -194,7 +199,8 @@ id = "customer-tickets-none"
 prompt = "Does David Lee have any support tickets?"
 tags = ["customer-tickets"]
 [cases.expect]
-tools = ["search_customers"]
+tools = ["search_customers", "search_tickets"]
+arguments.search_tickets.customer_id = "C-004"
 answer_contains_any = ["no tickets", "no support tickets", "doesn't have", "does not have", "has no", "not have any", "not appear to have", "not currently have"]
 answer_not_contains = ["T-1001", "T-1002", "T-1003"]
 
@@ -203,9 +209,42 @@ id = "customer-tickets-pt"
 prompt = "Quais são os tickets da cliente Carla Mendes?"
 tags = ["customer-tickets", "portuguese"]
 [cases.expect]
-tools = ["search_customers"]
+tools = ["search_customers", "search_tickets"]
+arguments.search_tickets.customer_id = "C-003"
 answer_contains = ["T-1003"]
 answer_not_contains = ["T-1001", "T-1002"]
+
+[[cases]]
+id = "customer-open-tickets"
+prompt = "Which open tickets does Bruno Costa have?"
+tags = ["customer-tickets"]
+[cases.expect]
+tools = ["search_customers", "search_tickets"]
+arguments.search_tickets.customer_id = "C-002"
+answer_contains = ["T-1002"]
+answer_not_contains = ["T-1001", "T-1003"]
+
+[[cases]]
+id = "customer-open-tickets-none"
+prompt = "Does Carla Mendes have any open tickets?"
+tags = ["customer-tickets"]
+[cases.expect]
+# T-1003 is resolved. Filtering with status="open" or reading the status of every ticket are
+# both correct, so the status argument is not checked; the answer is.
+tools = ["search_customers", "search_tickets"]
+arguments.search_tickets.customer_id = "C-003"
+answer_contains_any = ["no open", "not have any open", "doesn't have any open", "does not have any open", "has no open", "none of", "not open", "no tickets with"]
+
+[[cases]]
+id = "customer-tickets-unknown-id"
+prompt = "Which tickets does customer C-404 have?"
+tags = ["customer-tickets", "not-found"]
+[cases.expect]
+# Either tool may report the unknown id: search_customers with no match, or search_tickets with
+# a "Customer C-404 not found" error (the one failed call allowed).
+max_tool_errors = 1
+answer_contains_any = ["not found", "not be found", "can't be found", "no customer", "couldn't find", "could not find", "does not exist", "doesn't exist", "unable to find", "no matching"]
+answer_not_contains = ["T-1001", "T-1002", "T-1003"]
 
 # --- no tool needed ----------------------------------------------------------------------
 
