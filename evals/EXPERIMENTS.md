@@ -29,13 +29,15 @@ What to look at for each decision:
 Dataset `tool_use` v4 (fingerprint `4b658680ae30`) for E0 and E1; v5 (`9cb92c3132be`) adds
 `grounded_ids` and is used from E0' on. E0 and E1 were recorded before tool results were saved,
 so `grounded_ids` cannot be re-graded from their reports (the E1 v5 figure was rebuilt by
-replaying its calls on the mock server). Rates are runs that passed every check; "gap" is the
-`customer-tickets` tag (needs `search_tickets`). Current baselines: **E3** for both providers
-(`baselines/20261117-093112-ollama-tool_use.json` and
-`baselines/20261117-122225-gemini-tool_use.json`).
+replaying its calls on the mock server). v6 (`ca3cfe14cc03`, 25 cases) expects `search_tickets`
+and is used from E4 on; the E3 reports were regraded to v6 (`*.v6.json`) to compare with it.
+Rates are runs that passed every check; "gap" is the `customer-tickets` tag (needs
+`search_tickets`). Current baselines: **E4** for both providers
+(`baselines/20261117-160218-ollama-tool_use.json` and
+`baselines/20261117-154027-gemini-tool_use.json`).
 
-E3 changed the mcp-server, which the report's `git_commit` does not see: its runs record the
-agent commit `66332f5`, the same code as E2b. The mcp-server commit is written in the row by hand.
+E3 and E4 changed the mcp-server, which the report's `git_commit` does not see. The mcp-server
+commit is written in the row by hand.
 
 | # | Date | Change | Provider / model | Pass rate | tool_errors | Gap | Safety | Avg latency | Out tokens | Decision |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -50,6 +52,8 @@ agent commit `66332f5`, the same code as E2b. The mcp-server commit is written i
 | E2b | 2026-11-16 | Same prompt (commit `bbeb24b`, prompt `04126f5787d2`, 3 repeats) | ollama / qwen3:8b | 54/66 (81.8%); **52/66 real** (two gap passes are false positives) | 100% | 16.7% reported, **0% real** | 100% | 107 s | 464 | **kept as the common prompt**; 2 runs below E0', recovery expected from E3 |
 | E3 | 2026-11-17 | Tool descriptions and errors: outputs and id formats described, no real ids as examples (mcp-server `5b20ebc`; agent `66332f5`, prompt `04126f5787d2`) | ollama / qwen3:8b | 54/66 (81.8%), **54/54 outside the gap**, all real | 100% | 0% (reported = real) | 100% | 141 s (see notes) | 460 | **kept** |
 | E3 | 2026-11-17 | Same (mcp-server `5b20ebc`, `--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 54/66 (81.8%), **54/54 outside the gap** | **100%** | 0% | **100%** | 10 s | 54 | **kept** |
+| E4 | 2026-11-17 | New `search_tickets` tool (mcp-server `ebf7cb2`) + dataset v6 (agent `04ed410`) | ollama / qwen3:8b | **75/75 (100%)** | 100% | **100%** | 100% | 142 s | 603 | **kept** |
+| E4 | 2026-11-17 | Same (`--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 72/75 (96.0%); **72/72** of the runs that reached the model | 100% | 85.7% (100% without provider errors) | 100% | 16 s | 67 | **kept** |
 
 ### E1 notes: faster, but it guesses
 
@@ -255,12 +259,87 @@ criterion set before the run was met, for both providers:
 **Decision.** Kept for both. The descriptions are final; the only failures left are the gap,
 which needs a tool (E4).
 
-## Planned
+### E4 notes: the search_tickets tool
 
-| # | Change | Where | Affects | Expected effect |
-|---|---|---|---|---|
-| E4 | New `search_tickets` tool + dataset v6 (gap cases expect it) | mcp-server, dataset | both | Gap from 0% to near 100%; fewer steps and tokens in those cases |
+Criteria set before the run, all met:
 
-Deferred, not planned: **E1b** (`OLLAMA_REASONING=false` on top of E3). It is the only way found
-so far to make qwen3 fast, and E3 may have removed the reason it failed in E1 (the real id in
-the `create_ticket` example). Worth a run when Ollama latency matters.
+| Criterion | Ollama E3 (v6) -> E4 | Gemini E3 (v6) -> E4 |
+|---|---|---|
+| `customer-tickets` >= 90% | 0% -> **100%** (21/21) | 0% -> **100%** of 18 completed runs (85.7% with provider errors) |
+| `search_tickets` called with the id from `search_customers` | every run | every run |
+| `grounded_ids`, `arguments` 100% | yes | yes |
+| "No tickets" only for David, no invented tickets | yes | yes |
+| 54/54 outside the gap, `safety` not down | 54/54, 100% | 54/54, 100% |
+
+- **The gap is closed.** Every ticket answer now comes from a tool: `search_customers` resolves
+  the name, `search_tickets` gets the tickets with that id. Both models used the `status`
+  filter on their own for "open tickets" (6/6 runs each), and both answered "no open tickets"
+  for Carla from an empty, filtered result.
+- **Absence is now an answer, not a guess.** "David Lee has no support tickets" is correct and
+  passes, 3/3 for both. It is the answer that was a hallucination in E0'-E2 and is now evidence,
+  because the tool description says what an empty list means.
+- **Unknown id, error not empty list.** For C-404 both models call `search_tickets` first, get
+  "Customer C-404 not found", confirm with `search_customers`, and say the customer does not
+  exist (Ollama 3/3, Gemini 2/2). The one failed call allowed by the case is exactly that error.
+- **Gemini's 3 failures are provider errors, not behaviour.** `LLMUnavailableError` in 3 runs
+  spread over six minutes (15:50-15:56), after the retries; the runner records them per run
+  and goes on. Not verified why (the provider returned an unavailable error; the console log of
+  the run in `logs/` has the details). They do not count against the model, but they do count
+  against the service: the fallback chain (`FallbackChatModel`) exists for this.
+- **Ollama passes every run, 75/75**, the first perfect run of this log.
+- **A blind spot the dataset cannot see.** Ollama sometimes calls `search_tickets` with
+  `max_results=1` (David, Carla). With the mock data (at most one ticket per customer) the
+  answer is still right, but a customer with several tickets would get an incomplete list,
+  and nothing would fail. The dataset only tests what the mock data can express: a customer
+  with more tickets than a small `max_results` is the next case to add.
+- **Cost:** one more step in the gap cases (2.3 steps per run on average for both). Ollama:
+  input tokens 1320 -> 2115, output 460 -> 603, gap cases 167 s -> 215 s; outside the gap
+  135 s -> 114 s, which supports reading the E3 latency as a busy machine. Gemini: input tokens
+  1568 -> 2309 (one more tool definition in every request, and longer tool results), latency
+  10 s -> 16 s, partly the `--max-rpm 12` waits now that runs make more requests.
+
+**Decision.** Kept. The experiment loop on this dataset is complete: no failure left that a
+prompt, a description or a tool would fix.
+
+## Summary: what the experiments taught
+
+| Step | Change | Ollama (qwen3:8b) | Gemini (flash-lite) |
+|---|---|---|---|
+| E0' | Baseline (v5) | 54/54 outside the gap, never guesses (thinking) | 50/54; customer ids as ticket ids, guesses, false "no tickets" |
+| E1 | Thinking off | rejected: fast, but guesses ids and writes for the wrong customer | - |
+| E2 | Prompt: no guessed ids, failure is not absence | regression: refuses general questions | no more guesses; `safety` 50% -> 83% |
+| E2b | Prompt: scope the "no tool" rule | refuses lookups by id; false "no tickets" | no false "no tickets" |
+| E3 | Tool descriptions: outputs, id formats, no real ids | 54/54, honest gap answers | 54/54, `tool_errors` 100% |
+| E4 | `search_tickets` tool | **75/75** | **72/72** completed (3 provider errors) |
+
+1. **Measure before changing, one change at a time.** Every decision here rests on a
+   comparison with the run before, on the same dataset version, with criteria written down
+   before the run. Without that, E2 would have looked like an improvement (it was, for one model).
+2. **Read the failures, not only the rates.** Several numbers lied: E1's +9 points were lucky
+   guesses, two E2b "passes" were a real id quoted as a format example, and E4's Gemini 96%
+   is 100% of the runs that reached the model.
+3. **A grader is a hypothesis too.** `max_tool_errors` missed right guesses, so `grounded_ids`
+   was added (v5); answer checks flagged honest wording (v4). Fix the grader, bump the version,
+   regrade old runs instead of re-running them.
+4. **Prompt rules move failures around on small models.** Each rule fixed what it targeted and
+   broke a neighbour on qwen3 (general questions, lookups by id). Rules need a scope, and they
+   are the wrong place for knowledge about tools.
+5. **Tool descriptions are part of the prompt, and the most effective part.** Saying what a
+   tool returns, what it does not return and what an empty result means fixed more than three
+   prompt rules. Examples in descriptions and errors are read as data: describe formats, never
+   real values (the C-001 example explains E1's wrong write).
+6. **Some gaps need a capability, not words.** No wording made "which tickets does X have?"
+   answerable; a tool did, and the dataset was updated to expect it.
+7. **Provenance matters.** `git_commit`, `git_dirty`, prompt and dataset fingerprints made
+   every run explainable; changes outside the repository (the mcp-server) were the gap in it,
+   covered by hand here. A `tools_fingerprint` in the report would close it.
+8. **Models differ, the method does not.** The same change helped one model and hurt the other
+   (E2). A shared prompt is a trade-off, decided on both reports.
+
+## Next, if this topic is reopened
+
+| # | Change | Why |
+|---|---|---|
+| - | Dataset v7: a customer with several tickets, checked against a small `max_results` | The blind spot found in E4 |
+| - | `tools_fingerprint` in the report meta | Changes to the mcp-server become visible in reports |
+| E1b | `OLLAMA_REASONING=false` on top of E4 | The only known way to make qwen3 fast; E1's wrong write had a cause (the real id in an example) that E3 removed |
