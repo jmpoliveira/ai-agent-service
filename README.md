@@ -63,6 +63,20 @@ The reasoning is in [docs/adr](docs/adr).
 
 `tests/test_architecture.py` fails the build if a layer imports something it should not.
 
+## Design decisions
+
+Every significant decision is an ADR in [docs/adr](docs/adr), with the context, the
+alternatives considered and the consequences. In short:
+
+| ADR | Decision | Trade-off accepted |
+|---|---|---|
+| [0001](docs/adr/0001-architecture.md) | Clean Architecture with an explicit agent loop (`RunAgent`), stop conditions as data | More code than a framework agent; in return the loop is testable without a network and every exit is explicit |
+| [0002](docs/adr/0002-llm-port.md) | One `ChatModel` port speaking domain types; adapters on the official LangChain partner packages | LangChain quirks can leak into adapters; any adapter can move to the native SDK without touching the loop |
+| [0003](docs/adr/0003-model-selection.md) | The caller chooses the provider; the agent never picks its own model | No automatic routing yet; it comes later as deterministic rules backed by eval data |
+| [0004](docs/adr/0004-evolution-strategy.md) | One evolving agent repository; separate repositories per deployable (MCP server, RAG) | Changes across repositories (a new tool) need coordination, and evals must record both sides |
+| [0005](docs/adr/0005-evals.md) | A small in-repo eval harness with code-based graders, before any framework | Maintaining our own harness; in return the agent under test is the deployed one and every mechanism is visible |
+| [0006](docs/adr/0006-eval-results-in-phoenix.md) | Explore eval results in Arize Phoenix, published from saved reports | One more local service, and a source-available (not OSI) license for the server |
+
 ## Quick start
 
 Requirements: Python 3.12+, a running MCP server (for example the companion
@@ -164,16 +178,36 @@ make eval                               # needs the MCP server and the provider 
 make eval PROVIDER=gemini ARGS="--tag customer-tickets"
 ```
 
-The dataset ([evals/datasets/tool_use.toml](evals/datasets/tool_use.toml)) has 22 cases over the
+The dataset ([evals/datasets/tool_use.toml](evals/datasets/tool_use.toml)) has 25 cases over the
 mcp-server mock data: customer lookup, tickets by id, tickets of a customer, no-tool questions,
-a write, and safety cases including a prompt injection planted in a tool result. Each case runs
-several times; the report gives pass rates per check and per tag, cost and latency, the trace id
-of every run, and a comparison with a baseline. Write tools are stubbed, so evals never change
+a write, and safety cases including a prompt injection planted in a tool result. Code-based
+graders check the tool sequence, the arguments, forbidden tools, tool errors, the answer, and
+that every id the model passes to a tool appeared before (`grounded_ids`: a right guess still
+fails). Each case runs several times; the report gives pass rates per check and per tag, cost
+and latency, the trace id of every run, provenance (git commit, prompt and dataset
+fingerprints), and a comparison with a baseline. Write tools are stubbed, so evals never change
 the server's data. Any report can be published to [Arize Phoenix](https://github.com/Arize-ai/phoenix)
 (`make publish REPORT=...`, or `--publish` on a run) to follow each case end to end, from the
 prompt to the failed check and its trace, and to compare runs case by case. How to run and
 extend them: [evals/README.md](evals/README.md); design: [ADR 0005](docs/adr/0005-evals.md),
 [ADR 0006](docs/adr/0006-eval-results-in-phoenix.md).
+
+### What the evals changed
+
+Six experiments, one change at a time, each measured against the run before on two models
+(full log, with every failure read: [evals/EXPERIMENTS.md](evals/EXPERIMENTS.md)):
+
+| Step | Change | qwen3:8b (Ollama) | gemini-3.5-flash-lite |
+|---|---|---|---|
+| E0' | Baseline | 54/66 | 50/66; customer ids passed as ticket ids, false "no tickets" answers |
+| E1 | Thinking off | rejected: 4x faster, but guessed ids and wrote for the wrong customer | - |
+| E2-E2b | System prompt rules | each rule moved a failure instead of removing it | guessing gone, false absence gone |
+| E3 | Tool descriptions: outputs, id formats, no real ids as examples | 54/54 outside the gap | 54/54 outside the gap |
+| E4 | New `search_tickets` tool in the mcp-server | **75/75** | **72/72** completed (3 provider errors) |
+
+The largest gain came from the **tool descriptions**, not the prompt: saying what a tool returns,
+what it does not return and what an empty result means. Examples in descriptions are read as
+data (a real customer id used as an example explained E1's wrong write).
 
 ## Docker
 
@@ -203,19 +237,19 @@ server, the HTTP API, settings validation, and the dependency rule.
 endpoints, the Docker build and run, the OTLP export to Jaeger, and whether each model family
 produces good tool calls (measure it with `make eval`).
 
-Not implemented yet: the roadmap below, apart from the evals of step 1. Until rate limiting and
-request-body size limits exist, put a reverse proxy in front of the service.
+Not implemented yet: the roadmap below from step 2 on. Until rate limiting and request-body
+size limits exist, put a reverse proxy in front of the service.
 
 ## Roadmap
 
 The order follows one rule: **measure first, then protect, then add features.** Each step is a
 tag (`v0.2`, `v0.3`...) with its ADRs. Where each capability lives follows
 [ADR 0004](docs/adr/0004-evolution-strategy.md). `v0.1.0` (the agent loop, three providers, MCP
-tools, tracing) is done.
+tools, tracing) and `v0.2.0` (evals and tool design) are done.
 
 | # | Capability | What | Why at this point |
 |---|---|---|---|
-| 1 | **Evals and tool design** | Harness, dataset and first baselines done (Ollama, Gemini; see [EXPERIMENTS.md](evals/EXPERIMENTS.md)); results explorable in Phoenix ([ADR 0006](docs/adr/0006-eval-results-in-phoenix.md)); next: Claude baseline, then `search_tickets` in the mcp-server measured against them | Every later change is measured against this |
+| 1 | **Evals and tool design** ✅ `v0.2.0` | Harness, dataset v6, baselines for Ollama and Gemini, six measured experiments ending with `search_tickets` in the mcp-server ([EXPERIMENTS.md](evals/EXPERIMENTS.md)); results explorable in Phoenix ([ADR 0006](docs/adr/0006-eval-results-in-phoenix.md)). Open: a Claude baseline, dataset v7 (a customer with several tickets) | Every later change is measured against this |
 | 2 | **Azure OpenAI provider** | A fourth `ChatModel` adapter, usable in `LLM_FALLBACKS` and measured in the eval baselines | The most common enterprise AI platform; the port makes it a small, contained change |
 | 3 | **RAG** | Retrieval from the RAG services (their own repositories, with their own deployment lifecycle) exposed as a `search_knowledge_base` MCP tool; retrieval and answer evals (recall@k, faithfulness with an LLM judge) | Retrieval is a read-only tool on the existing path, so no architecture change. Documents are untrusted input: results go through the same sanitisation, and the injection eval cases cover them |
 | 4 | **Guardrails and security I** | Human confirmation for write tools (MCP elicitation), per-tool permissions, input/output guardrails (injection, PII), rate limiting, request size limits; checked against the OWASP Top 10 for LLM applications | The agent can already change data, and the safety eval cases show where models fail |
