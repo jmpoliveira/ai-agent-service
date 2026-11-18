@@ -23,9 +23,10 @@ htmlcov/
 .idea/
 .vscode/
 .DS_Store
+.obsidian/
 
 # Logs
 logs/
 
-# Obsidian
-.obsidian/
+# Evals
+evals/results/

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -216,6 +217,25 @@ async def test_handled_provider_errors_become_domain_errors():
         await adapter.chat([Message.user("hi")], [])
     assert isinstance(raised.value.__cause__, httpx.ConnectError)
     assert raised.value.provider == "claude"
+
+
+async def test_provider_failures_log_one_line_at_warning_and_the_traceback_at_debug(
+    caplog: pytest.LogCaptureFixture,
+):
+    # Arrange
+    caplog.set_level(logging.DEBUG, logger="src.infrastructure.llm.langchain_chat_model")
+    adapter, _ = _model([httpx.ConnectError("refused")])
+
+    # Act
+    with pytest.raises(LLMUnavailableError):
+        await adapter.chat([Message.user("hi")], [])
+
+    # Assert
+    warning, debug = (r for r in caplog.records if r.name.endswith("langchain_chat_model"))
+    assert (warning.levelno, warning.exc_info) == (logging.WARNING, None)
+    assert warning.__dict__["error_type"] == "ConnectError"
+    assert debug.levelno == logging.DEBUG
+    assert debug.exc_info is not None
 
 
 async def test_langchain_rate_limit_errors_become_domain_rate_limit_errors():

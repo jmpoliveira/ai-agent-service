@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-agent-service"
-version = "0.1.0"
+version = "0.2.0"
 description = "Provider-agnostic AI agent service (Ollama, Gemini, Claude) with tool calling over MCP, built to grow with RAG, evals and observability."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -38,7 +38,12 @@ Repository = "https://github.com/jmpoliveira/ai-agent-service"
 Issues = "https://github.com/jmpoliveira/ai-agent-service/issues"
 
 [project.optional-dependencies]
+# Only for `python -m evals publish` (ADR 0006): never imported by the service or the image.
+evals = [
+  "arize-phoenix-client>=3.7,<4",
+]
 dev = [
+  "ai-agent-service[evals]",
   "pytest>=9,<10",
   "pytest-asyncio>=1.4,<2",
   "pytest-cov>=7,<8",
@@ -67,7 +72,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["src", "config"]
+source = ["src", "config", "evals"]
 branch = true
 
 [tool.coverage.report]
@@ -107,6 +112,10 @@ quote-style = "double"
 # pyright
 # ---------------------------------------------------------------------------------------
 [tool.pyright]
-include = ["src", "config", "main.py", "tests"]
+include = ["src", "config", "main.py", "evals", "tests"]
+# Resolve imports from the project venv (editors and a bare `pyright` call), not only via
+# `make typecheck`, which passes --pythonpath.
+venvPath = "."
+venv = ".venv"
 pythonVersion = "3.12"
 typeCheckingMode = "strict"

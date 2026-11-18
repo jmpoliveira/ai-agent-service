@@ -72,4 +72,9 @@ make cov          # coverage, fails under the minimum in pyproject.toml
 - Mock external services (Ollama, Gemini, Claude, MCP). The only real server in tests is the
   tiny in-process FastMCP one in `tests/integration`.
 - Cover edge cases: empty input, oversized input, malformed provider output, missing settings.
+- Eval results are published to Phoenix through the `ResultSink` port (ADR 0006); only
+  `evals/phoenix_sink.py` may import `phoenix` (the optional `.[evals]` extra).
+- `evals/` is a separate entry point (see `evals/README.md`, ADR 0005): the service must never
+  import it. `make eval` needs a real model and MCP server, so it is not part of `make check`.
+  Bump the dataset `version` whenever a case or expectation changes.
 - Do not commit or push unless asked.

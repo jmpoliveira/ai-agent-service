@@ -5,11 +5,13 @@ BIN    := $(VENV)/bin
 PYTHON := $(BIN)/python
 IMAGE  := ai-agent-service:latest
 PORT   ?= 8000
+PROVIDER ?=
+REPEATS  ?= 3
 COMPOSE     := docker compose
 COMPOSE_ENV := docker compose -f docker-compose.yml -f docker-compose.docker-env.yml
 
-.PHONY: help venv install run run-log test test-unit cov lint format typecheck check \
-        docker-build up up-env down logs restart health clean
+.PHONY: help venv install run run-log eval eval-log test test-unit cov lint format typecheck check \
+        docker-build up up-env down logs restart health clean regrade publish
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -33,6 +35,25 @@ run:  ## Run the service locally (host and port come from the settings)
 run-log:  ## Run locally and also save the logs to logs/agent-<timestamp>.log
 	@mkdir -p logs
 	$(PYTHON) main.py 2>&1 | tee -i logs/agent-$$(date +%Y%m%d-%H%M%S).log
+
+# Needs the MCP server and the provider running; PROVIDER defaults to LLM_DEFAULT_PROVIDER.
+# Extra options: make eval ARGS="--tag customer-tickets --baseline evals/baselines/x.json"
+eval:  ## Run the tool-use evals against the real agent (see evals/README.md)
+	$(PYTHON) -m evals run --repeats $(REPEATS) $(if $(PROVIDER),--provider $(PROVIDER)) $(ARGS)
+
+# Same as eval, with the tee -i and 2>&1 reasons explained above run-log.
+eval-log:  ## Run the evals and also save the output to logs/eval-<timestamp>.log
+	@mkdir -p logs
+	$(PYTHON) -m evals run --repeats $(REPEATS) $(if $(PROVIDER),--provider $(PROVIDER)) $(ARGS) 2>&1 | tee -i logs/eval-$$(date +%Y%m%d-%H%M%S).log
+
+# No model or server needed: re-scores the saved trajectories with the current dataset.
+regrade:  ## Score a saved report again with the current dataset: make regrade REPORT=<path>
+	$(PYTHON) -m evals regrade $(REPORT) $(ARGS)
+
+# Needs Phoenix running (docker-env) and PHOENIX_BASE_URL in .env; see ADR 0006.
+# To publish right after a run instead: make eval ARGS="--publish"
+publish:  ## Explore a saved report in Phoenix, case by case: make publish REPORT=<path>
+	$(PYTHON) -m evals publish $(REPORT) $(ARGS)
 
 # ---------- Quality ----------
 test:  ## Run the whole test suite (includes the in-process MCP integration tests)
