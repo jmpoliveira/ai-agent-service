@@ -78,3 +78,10 @@ make cov          # coverage, fails under the minimum in pyproject.toml
   import it. `make eval` needs a real model and MCP server, so it is not part of `make check`.
   Bump the dataset `version` whenever a case or expectation changes.
 - Do not commit or push unless asked.
+
+## Git workflow
+
+`main` and tags are protected on GitHub: changes go through a branch and a pull request with 4
+green checks, merges are squash or rebase (no merge commits), and tags cannot be deleted. Never
+suggest `git push origin main`, `--follow-tags` or tagging on a branch; a release is tagged on
+`main` after the merge. The full workflow is in `CONTRIBUTING.md`.

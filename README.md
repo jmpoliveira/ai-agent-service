@@ -167,6 +167,9 @@ CI runs the checks on Python 3.12, 3.13 and 3.14; the Docker image uses 3.13.
 Integration tests start a small real MCP server **in-process** on a local port; no external
 service is needed, and no LLM is called (models are scripted fakes).
 
+`main` is protected: changes go through a pull request with green CI, and releases are tagged
+after the merge. Workflow and release steps: [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Evals
 
 Tests prove the machinery; **evals measure the behaviour of a real model**: does it choose the
