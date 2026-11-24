@@ -208,9 +208,10 @@ Every expectation is optional; a case is scored only on what it states.
 | `id_pattern`                                       | every argument matching this regex appeared before the call, in the prompt or an earlier tool result (`grounded_ids`; a right guess still fails). `""` disables it |
 | `stop_reason`                                      | the run ended this way (default `finished`)                                                    |
 
-Text comparisons ignore case and repeated spaces. `[stub_tools]` (dataset or case) replaces a
-tool's result with canned text: write tools are stubbed so evals never change the server's
-data, and a case can stub a read tool to plant a prompt injection.
+Text comparisons ignore case, repeated spaces and typographic quotes (a curly apostrophe
+matches a plain one). `[stub_tools]` (dataset or case) replaces a tool's result with canned
+text: write tools are stubbed so evals never change the server's data, and a case can stub a
+read tool to plant a prompt injection.
 
 Rules of thumb:
 

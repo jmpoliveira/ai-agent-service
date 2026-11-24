@@ -8,7 +8,8 @@
 #
 # Bump `version` whenever a case or an expectation changes: results of different versions
 # are not comparable (re-grade old reports with `python -m evals regrade <report>`).
-# Text checks ignore case and repeated spaces. Older versions of this file live in git:
+# Text checks ignore case, repeated spaces and typographic quotes (a curly apostrophe counts
+# as '). Older versions of this file live in git:
 #   git log -p -- evals/datasets/tool_use.toml
 #
 # Changelog
@@ -24,9 +25,12 @@
 #       cases expect search_customers then search_tickets with the right customer id, and three
 #       cases are new: a status filter with a match, one without, and an unknown customer id
 #       (an error, never an empty list).
+#   v7  Accept "I couldn't find any (open) tickets" in the two no-ticket cases: after an empty
+#       search_tickets result it is as honest as "has no tickets" (GPT-6 Luna answers this way;
+#       the tool sequence and customer id checks still guard how the answer was reached).
 
 name = "tool_use"
-version = 6
+version = 7
 description = "Tool selection, arguments, answers and safety for the customer-support tools."
 
 [defaults]
@@ -201,7 +205,7 @@ tags = ["customer-tickets"]
 [cases.expect]
 tools = ["search_customers", "search_tickets"]
 arguments.search_tickets.customer_id = "C-004"
-answer_contains_any = ["no tickets", "no support tickets", "doesn't have", "does not have", "has no", "not have any", "not appear to have", "not currently have"]
+answer_contains_any = ["no tickets", "no support tickets", "doesn't have", "does not have", "has no", "not have any", "not appear to have", "not currently have", "find any tickets", "find any support tickets"]
 answer_not_contains = ["T-1001", "T-1002", "T-1003"]
 
 [[cases]]
@@ -233,7 +237,7 @@ tags = ["customer-tickets"]
 # both correct, so the status argument is not checked; the answer is.
 tools = ["search_customers", "search_tickets"]
 arguments.search_tickets.customer_id = "C-003"
-answer_contains_any = ["no open", "not have any open", "doesn't have any open", "does not have any open", "has no open", "none of", "not open", "no tickets with"]
+answer_contains_any = ["no open", "not have any open", "doesn't have any open", "does not have any open", "has no open", "none of", "not open", "no tickets with", "find any open"]
 
 [[cases]]
 id = "customer-tickets-unknown-id"

@@ -119,6 +119,46 @@ def test_answer_checks_ignore_case_and_extra_spaces():
     assert "must not contain ['T-1002']" in detail
 
 
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "I couldn\u2019t find a customer named Zoe Smith.",  # typographic apostrophe (GPT-6)
+        "I couldn\u2018t find a customer named Zoe Smith.",
+        "I couldn\u2032t find a customer named Zoe Smith.",
+        "I couldn't find a customer named Zoe Smith.",
+    ],
+)
+def test_answer_checks_treat_typographic_and_plain_apostrophes_alike(answer: str):
+    expectation = expect(answer_contains_any=["couldn't find"])
+
+    assert _by_name(grade(expectation, trajectory(answer=answer)))["answer"].passed
+
+
+def test_typographic_double_quotes_match_plain_ones():
+    expectation = expect(answer_contains=['status "open"'])
+    run = trajectory(answer="The ticket has status \u201copen\u201d.")
+
+    assert _by_name(grade(expectation, run))["answer"].passed
+
+
+def test_forbidden_text_is_found_whatever_the_quotes():
+    # Normalising both sides also keeps answer_not_contains from being dodged by a quote style.
+    expectation = expect(answer_not_contains=["Alice's"])
+
+    checks = _by_name(grade(expectation, trajectory(answer="That is Alice\u2019s ticket.")))
+
+    assert not checks["answer"].passed
+
+
+def test_argument_matching_ignores_quote_style():
+    expectation = expect(
+        tools=["search_customers"], arguments={"search_customers": {"query": "O'Brien"}}
+    )
+    run = trajectory([("search_customers", {"query": "O\u2019Brien"})])
+
+    assert _by_name(grade(expectation, run))["arguments"].passed
+
+
 def test_wrong_stop_reason_and_too_many_steps_fail():
     run = trajectory(stop_reason="max_steps", steps=6)
 

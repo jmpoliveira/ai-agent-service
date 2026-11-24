@@ -31,10 +31,14 @@ Dataset `tool_use` v4 (fingerprint `4b658680ae30`) for E0 and E1; v5 (`9cb92c313
 so `grounded_ids` cannot be re-graded from their reports (the E1 v5 figure was rebuilt by
 replaying its calls on the mock server). v6 (`ca3cfe14cc03`, 25 cases) expects `search_tickets`
 and is used from E4 on; the E3 reports were regraded to v6 (`*.v6.json`) to compare with it.
+v7 (`1942263723c2`) accepts "couldn't find any (open) tickets" in the two no-ticket cases and is
+used from E5 on; from E5 on the grader also treats typographic quotes as plain ones. The E4
+reports were regraded to v7 (`*.v7.json`) with no change in result.
 Rates are runs that passed every check; "gap" is the `customer-tickets` tag (needs
-`search_tickets`). Current baselines: **E4** for both providers
-(`baselines/20261117-160218-ollama-tool_use.json` and
-`baselines/20261117-154027-gemini-tool_use.json`).
+`search_tickets`). Current baselines: **E4** for Ollama and Gemini
+(`baselines/20261117-160218-ollama-tool_use.v7.json` and
+`baselines/20261117-154027-gemini-tool_use.v7.json`), **E5** for Foundry
+(`baselines/20261124-135418-foundry-tool_use.v7.json`).
 
 E3 and E4 changed the mcp-server, which the report's `git_commit` does not see. The mcp-server
 commit is written in the row by hand.
@@ -54,6 +58,7 @@ commit is written in the row by hand.
 | E3 | 2026-11-17 | Same (mcp-server `5b20ebc`, `--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 54/66 (81.8%), **54/54 outside the gap** | **100%** | 0% | **100%** | 10 s | 54 | **kept** |
 | E4 | 2026-11-17 | New `search_tickets` tool (mcp-server `ebf7cb2`) + dataset v6 (agent `04ed410`) | ollama / qwen3:8b | **75/75 (100%)** | 100% | **100%** | 100% | 142 s | 603 | **kept** |
 | E4 | 2026-11-17 | Same (`--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 72/75 (96.0%); **72/72** of the runs that reached the model | 100% | 85.7% (100% without provider errors) | 100% | 16 s | 67 | **kept** |
+| E5 | 2026-11-24 | New provider: Microsoft Foundry, `FOUNDRY_REASONING_EFFORT=none`, temperature 0 (ADR 0007; run before the commit, see notes; prompt `04126f5787d2`, `--max-rpm 30`) | foundry / gpt-6-luna (Data Zone Standard, EUR) | 63/75 on v6 as reported; 72/75 with the quote fix; **75/75 (100%)** on v7, all real | 100% | 71.4% reported, **100%** on v7 | 100% | **4.8 s** | 62 | **baseline** for Foundry |
 
 ### E1 notes: faster, but it guesses
 
@@ -301,6 +306,48 @@ Criteria set before the run, all met:
 **Decision.** Kept. The experiment loop on this dataset is complete: no failure left that a
 prompt, a description or a tool would fix.
 
+### E5 notes: a new provider, and a grader that did not know it
+
+Criteria set before reading the failures: behaviour checks (`tool_sequence`, `arguments`,
+`grounded_ids`, `tool_errors`, `forbidden_tools`) at 100%, `safety` 100%, every failure read.
+
+- **Every behaviour check is 100% in the raw report.** The right tools in the right order, the
+  customer id from `search_customers` passed to `search_tickets`, no guessed ids, no writes on a
+  read request, the injection in a tool result ignored. All 12 raw failures are the `answer`
+  check, all in "not found" or "no tickets" cases.
+- **9 failures were the grader, not the model.** GPT-6 Luna writes the typographic apostrophe
+  ("couldn’t find", U+2019) in 18 of 75 answers; the datasets use the plain one
+  ("couldn't find"), and `_normalise` only folded case and spaces. Ollama and Gemini write plain
+  apostrophes, so the bug was invisible until a new model family arrived. Fixed in the grader
+  (typographic quotes become plain ones on both sides, also for `answer_not_contains` and
+  argument matching), with tests; regrade only, no new model calls: 63 -> 72.
+- **3 failures were an expectation, decided on the wording.** "I couldn't find any (open)
+  tickets for David Lee / Carla Mendes", after `search_tickets` returned `count: 0`. It is as
+  honest as "has no tickets": the answer reports an empty result of the right query, which the
+  tool sequence and customer id checks still guard. Dataset v7 accepts "find any tickets",
+  "find any support tickets" and "find any open"; 72 -> 75. The E4 reports regraded to v7 do not
+  change (Ollama 75/75, Gemini 72/75 with the same 3 provider errors), so v7 loosens nothing
+  that used to fail.
+- **Fastest and most efficient of the three.** 4.8 s per run on average (Gemini 16 s, qwen3
+  142 s), 15.6 s at most; 2.24 steps; 1889 input and 62 output tokens per run. With reasoning off
+  there is no thinking to pay for, and it never needed more than two tool calls.
+- **Cost, estimated:** about USD 0.0002 per run at the announced Global Standard price
+  (0.10 / 0.50 per 1M input / output tokens), about 2 cents for the 75 runs. Not checked
+  against the Azure bill; the Data Zone price may differ.
+- **The E4 blind spot does not show here.** `search_tickets` is called with `max_results=20`
+  in 23 of 24 calls (10 once), never 1; it filters by `status="open"` for the two "open
+  tickets" questions (6/6). For C-404 it calls `search_tickets` once, gets "Customer C-404 not
+  found" and stops, without the confirming `search_customers` the other two models make.
+- **Portuguese** questions are answered in Portuguese ("O ticket T-1002 está aberto").
+- **Provenance gap.** The run was made before the Foundry code was committed: the report says
+  `git_commit: acdaac1` (main) and `git_dirty: true`, so the commit does not contain the code
+  that produced it. The method asks for a clean run; repeat it on the commit that adds the
+  provider and replace this report if the result differs.
+
+**Decision.** Baseline for Foundry. Grader fix and dataset v7 kept. Not decided here: a
+reasoning-effort experiment (`low`), which needs the Responses API or proof that tools work
+with reasoning on Chat Completions.
+
 ## Summary: what the experiments taught
 
 | Step | Change | Ollama (qwen3:8b) | Gemini (flash-lite) |
@@ -311,6 +358,7 @@ prompt, a description or a tool would fix.
 | E2b | Prompt: scope the "no tool" rule | refuses lookups by id; false "no tickets" | no false "no tickets" |
 | E3 | Tool descriptions: outputs, id formats, no real ids | 54/54, honest gap answers | 54/54, `tool_errors` 100% |
 | E4 | `search_tickets` tool | **75/75** | **72/72** completed (3 provider errors) |
+| E5 | New provider, Foundry `gpt-6-luna` with reasoning off: **75/75** on v7 (63/75 before the grader and v7 fixes), 4.8 s per run | unchanged on v7: 75/75 | unchanged on v7: 72/72 completed |
 
 1. **Measure before changing, one change at a time.** Every decision here rests on a
    comparison with the run before, on the same dataset version, with criteria written down
@@ -335,11 +383,17 @@ prompt, a description or a tool would fix.
    covered by hand here. A `tools_fingerprint` in the report would close it.
 8. **Models differ, the method does not.** The same change helped one model and hurt the other
    (E2). A shared prompt is a trade-off, decided on both reports.
+9. **A new model family tests the grader as much as the agent.** E5's first number (84%) was
+   mostly typography. Keyword graders encode the writing style of the models they were tuned
+   on; an LLM judge for answers (roadmap step 3) is the structural fix, and until then every
+   new provider's failures are read one by one before any conclusion.
 
 ## Next, if this topic is reopened
 
 | # | Change | Why |
 |---|---|---|
-| - | Dataset v7: a customer with several tickets, checked against a small `max_results` | The blind spot found in E4 |
+| - | Dataset v8: a customer with several tickets, checked against a small `max_results` | The blind spot found in E4 (v7 went to the E5 wording fix) |
+| - | Clean E5 run on the commit that adds the Foundry provider | The E5 report is `git_dirty` |
+| E5b | `FOUNDRY_REASONING_EFFORT=low` (Responses API if Chat Completions refuses tools with reasoning) | Whether reasoning buys anything on this dataset, and at what latency and cost |
 | - | `tools_fingerprint` in the report meta | Changes to the mcp-server become visible in reports |
 | E1b | `OLLAMA_REASONING=false` on top of E4 | The only known way to make qwen3 fast; E1's wrong write had a cause (the real id in an example) that E3 removed |
