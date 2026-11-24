@@ -38,7 +38,7 @@ Rates are runs that passed every check; "gap" is the `customer-tickets` tag (nee
 `search_tickets`). Current baselines: **E4** for Ollama and Gemini
 (`baselines/20261117-160218-ollama-tool_use.v7.json` and
 `baselines/20261117-154027-gemini-tool_use.v7.json`), **E5** for Foundry
-(`baselines/20261124-135418-foundry-tool_use.v7.json`).
+(`baselines/20261124-142704-foundry-tool_use.json`, the clean run).
 
 E3 and E4 changed the mcp-server, which the report's `git_commit` does not see. The mcp-server
 commit is written in the row by hand.
@@ -58,7 +58,8 @@ commit is written in the row by hand.
 | E3 | 2026-11-17 | Same (mcp-server `5b20ebc`, `--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 54/66 (81.8%), **54/54 outside the gap** | **100%** | 0% | **100%** | 10 s | 54 | **kept** |
 | E4 | 2026-11-17 | New `search_tickets` tool (mcp-server `ebf7cb2`) + dataset v6 (agent `04ed410`) | ollama / qwen3:8b | **75/75 (100%)** | 100% | **100%** | 100% | 142 s | 603 | **kept** |
 | E4 | 2026-11-17 | Same (`--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 72/75 (96.0%); **72/72** of the runs that reached the model | 100% | 85.7% (100% without provider errors) | 100% | 16 s | 67 | **kept** |
-| E5 | 2026-11-24 | New provider: Microsoft Foundry, `FOUNDRY_REASONING_EFFORT=none`, temperature 0 (ADR 0007; run before the commit, see notes; prompt `04126f5787d2`, `--max-rpm 30`) | foundry / gpt-6-luna (Data Zone Standard, EUR) | 63/75 on v6 as reported; 72/75 with the quote fix; **75/75 (100%)** on v7, all real | 100% | 71.4% reported, **100%** on v7 | 100% | **4.8 s** | 62 | **baseline** for Foundry |
+| E5 | 2026-11-24 | New provider: Microsoft Foundry, `FOUNDRY_REASONING_EFFORT=none`, temperature 0 (ADR 0007; first run before the commit, prompt `04126f5787d2`, `--max-rpm 30`) | foundry / gpt-6-luna (Data Zone Standard, EUR) | 63/75 on v6 as reported; 72/75 with the quote fix; 75/75 on v7, all real | 100% | 71.4% reported, 100% on v7 | 100% | 4.8 s | 62 | grader fix and v7 **kept** |
+| E5 | 2026-11-24 | Same, clean run on dataset v7 (commit `139b3dd`, `git_dirty: false`) | foundry / gpt-6-luna | **75/75 (100%)** | 100% | **100%** | 100% | **4.7 s** | 62 | **baseline** for Foundry |
 
 ### E1 notes: faster, but it guesses
 
@@ -339,10 +340,17 @@ Criteria set before reading the failures: behaviour checks (`tool_sequence`, `ar
   tickets" questions (6/6). For C-404 it calls `search_tickets` once, gets "Customer C-404 not
   found" and stops, without the confirming `search_customers` the other two models make.
 - **Portuguese** questions are answered in Portuguese ("O ticket T-1002 está aberto").
-- **Provenance gap.** The run was made before the Foundry code was committed: the report says
-  `git_commit: acdaac1` (main) and `git_dirty: true`, so the commit does not contain the code
-  that produced it. The method asks for a clean run; repeat it on the commit that adds the
-  provider and replace this report if the result differs.
+- **Provenance gap, closed by a clean run.** The first run was made before the Foundry code was
+  committed (`git_commit: acdaac1`, `git_dirty: true`), so no commit contained the code that
+  produced it. The second run, on `139b3dd` with `git_dirty: false` and dataset v7, is the
+  baseline: **75/75**, same steps (2.24), tokens (1889 in, 62 out) and latency (4.7 s average,
+  p50 3.8 s, p90 8.0 s, 18.6 s at most).
+- **Stable behaviour, variable wording.** Between the two runs, 72 of 75 runs made exactly the
+  same tool calls with the same arguments; the 3 others differ only in `max_results` (5, 10 or
+  20). Only 46 of 75 answers are word-for-word the same, even at temperature 0, and 21 answers
+  of the clean run use the typographic apostrophe. Without the grader fix this run would have
+  failed again, on different runs: wording is the part of the output a keyword grader cannot pin
+  down, which is the argument for an LLM judge (lesson 9).
 
 **Decision.** Baseline for Foundry. Grader fix and dataset v7 kept. Not decided here: a
 reasoning-effort experiment (`low`), which needs the Responses API or proof that tools work
@@ -358,7 +366,7 @@ with reasoning on Chat Completions.
 | E2b | Prompt: scope the "no tool" rule | refuses lookups by id; false "no tickets" | no false "no tickets" |
 | E3 | Tool descriptions: outputs, id formats, no real ids | 54/54, honest gap answers | 54/54, `tool_errors` 100% |
 | E4 | `search_tickets` tool | **75/75** | **72/72** completed (3 provider errors) |
-| E5 | New provider, Foundry `gpt-6-luna` with reasoning off: **75/75** on v7 (63/75 before the grader and v7 fixes), 4.8 s per run | unchanged on v7: 75/75 | unchanged on v7: 72/72 completed |
+| E5 | New provider, Foundry `gpt-6-luna` with reasoning off: **75/75** on v7, twice (63/75 before the grader and v7 fixes), 4.7 s per run | unchanged on v7: 75/75 | unchanged on v7: 72/72 completed |
 
 1. **Measure before changing, one change at a time.** Every decision here rests on a
    comparison with the run before, on the same dataset version, with criteria written down
@@ -393,7 +401,6 @@ with reasoning on Chat Completions.
 | # | Change | Why |
 |---|---|---|
 | - | Dataset v8: a customer with several tickets, checked against a small `max_results` | The blind spot found in E4 (v7 went to the E5 wording fix) |
-| - | Clean E5 run on the commit that adds the Foundry provider | The E5 report is `git_dirty` |
 | E5b | `FOUNDRY_REASONING_EFFORT=low` (Responses API if Chat Completions refuses tools with reasoning) | Whether reasoning buys anything on this dataset, and at what latency and cost |
 | - | `tools_fingerprint` in the report meta | Changes to the mcp-server become visible in reports |
 | E1b | `OLLAMA_REASONING=false` on top of E4 | The only known way to make qwen3 fast; E1's wrong write had a cause (the real id in an example) that E3 removed |
