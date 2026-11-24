@@ -23,7 +23,12 @@ from src.domain.messages import ToolCall
 _tracer = trace.get_tracer("ai_agent_service")
 
 # Provider aliases used in configuration -> values of gen_ai.provider.name.
-_PROVIDER_NAMES = {"gemini": "gcp.gemini", "anthropic": "anthropic", "ollama": "ollama"}
+_PROVIDER_NAMES = {
+    "gemini": "gcp.gemini",
+    "anthropic": "anthropic",
+    "ollama": "ollama",
+    "foundry": "azure.ai.openai",
+}
 
 ATTR_OPERATION = "gen_ai.operation.name"
 ATTR_PROVIDER = "gen_ai.provider.name"

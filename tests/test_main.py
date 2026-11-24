@@ -30,6 +30,9 @@ def _settings(**overrides: Any) -> Settings:
         "gemini_model": "g-model",
         "anthropic_api_key": "a-key",
         "anthropic_model": "a-model",
+        "foundry_base_url": "https://res.openai.azure.com/openai/v1",
+        "foundry_api_key": "f-key",
+        "foundry_model": "f-deployment",
         "llm_default_provider": "ollama",
     }
     return Settings(_env_file=None, **{**base, **overrides})  # type: ignore[call-arg]
@@ -49,15 +52,22 @@ def test_every_enabled_provider_gets_a_retrying_model():
     models = build_chat_models(_settings())
 
     # Assert
-    assert set(models) == {"ollama", "gemini", "anthropic"}
+    assert set(models) == {"ollama", "gemini", "anthropic", "foundry"}
     assert all(isinstance(m, RetryingChatModel) for m in models.values())
     assert models["anthropic"].model == "a-model"
+    assert models["foundry"].model == "f-deployment"
 
 
 def test_only_configured_providers_are_built():
     models = build_chat_models(
         _settings(
-            gemini_api_key=None, gemini_model=None, anthropic_api_key=None, anthropic_model=None
+            gemini_api_key=None,
+            gemini_model=None,
+            anthropic_api_key=None,
+            anthropic_model=None,
+            foundry_base_url=None,
+            foundry_api_key=None,
+            foundry_model=None,
         )
     )
     assert set(models) == {"ollama"}
@@ -74,7 +84,7 @@ def test_fallback_chains_wrap_the_primary_only():
 
 
 def test_run_agent_exposes_the_configured_providers():
-    assert build_run_agent(_settings()).providers == ("ollama", "gemini", "anthropic")
+    assert build_run_agent(_settings()).providers == ("ollama", "gemini", "anthropic", "foundry")
 
 
 def test_health_checks_cover_ollama_and_the_mcp_server():

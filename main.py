@@ -22,6 +22,7 @@ from src.application.run_agent import AgentConfig, RunAgent
 from src.domain.agent import AgentBudget
 from src.infrastructure.health.http_check import HttpHealthCheck
 from src.infrastructure.llm.claude_chat import create_claude_chat_model
+from src.infrastructure.llm.foundry_chat import create_foundry_chat_model
 from src.infrastructure.llm.gemini_chat import create_gemini_chat_model
 from src.infrastructure.llm.ollama_chat import create_ollama_chat_model
 from src.infrastructure.llm.resilience import FallbackChatModel, RetryingChatModel, RetryPolicy
@@ -61,6 +62,16 @@ def build_chat_models(settings: Settings) -> dict[str, ChatModel]:
         raw["anthropic"] = create_claude_chat_model(
             api_key=settings.anthropic_api_key,
             model=settings.anthropic_model,
+            timeout_seconds=timeout,
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+        )
+    if settings.foundry_base_url and settings.foundry_api_key and settings.foundry_model:
+        raw["foundry"] = create_foundry_chat_model(
+            base_url=str(settings.foundry_base_url),
+            api_key=settings.foundry_api_key,
+            model=settings.foundry_model,
+            reasoning_effort=settings.foundry_reasoning_effort,
             timeout_seconds=timeout,
             max_output_tokens=max_tokens,
             temperature=temperature,

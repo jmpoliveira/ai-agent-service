@@ -4,7 +4,7 @@ Status: accepted
 
 ## Decision
 
-The provider is an **input**: an alias (`ollama`, `gemini`, `anthropic`) validated against the
+The provider is an **input**: an alias (`ollama`, `gemini`, `anthropic`, `foundry`) validated against the
 configured providers, defaulting to `LLM_DEFAULT_PROVIDER`. Raw model names are not accepted from
 callers; model ids live in configuration.
 

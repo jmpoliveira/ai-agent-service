@@ -47,6 +47,7 @@ _EXPERIMENT_META = (
     "model",
     "temperature",
     "ollama_reasoning",
+    "foundry_reasoning_effort",
     "system_prompt_fingerprint",
     "dataset_version",
     "dataset_fingerprint",

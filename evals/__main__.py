@@ -331,6 +331,7 @@ def build_meta(settings: Settings, dataset: Dataset, provider: str, model: str) 
         "model": model,
         "temperature": settings.llm_temperature,
         "ollama_reasoning": settings.ollama_reasoning,
+        "foundry_reasoning_effort": settings.foundry_reasoning_effort,
         # Prompts are not versioned files yet; the hash ties a result to the exact prompt text.
         "system_prompt_fingerprint": hashlib.sha256(
             settings.agent_system_prompt.encode("utf-8")
