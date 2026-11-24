@@ -23,6 +23,7 @@ def _clean_environment(monkeypatch: pytest.MonkeyPatch) -> None:
                 "OLLAMA_",
                 "GEMINI_",
                 "ANTHROPIC_",
+                "FOUNDRY_",
                 "LLM_",
                 "MCP_",
                 "OTEL_",
@@ -60,6 +61,61 @@ def test_all_providers_can_be_enabled_together():
     # Assert
     assert settings.enabled_providers == ("ollama", "gemini", "anthropic")
     assert settings.default_provider == "anthropic"
+
+
+_FOUNDRY: dict[str, Any] = {
+    "foundry_base_url": "https://res.openai.azure.com/openai/v1",
+    "foundry_api_key": "f-key",
+    "foundry_model": "luna-deployment",
+}
+
+
+def test_foundry_is_enabled_by_its_endpoint_key_and_deployment():
+    # Act
+    settings = _settings(**_FOUNDRY, llm_default_provider="foundry")
+
+    # Assert
+    assert settings.enabled_providers == ("ollama", "foundry")
+    assert settings.default_provider == "foundry"
+    assert settings.foundry_reasoning_effort == "none"
+
+
+@pytest.mark.parametrize("missing", ["foundry_base_url", "foundry_api_key", "foundry_model"])
+def test_a_half_configured_foundry_is_an_error(missing: str):
+    config = {**_FOUNDRY, missing: None}
+    with pytest.raises(ValidationError, match="'foundry' is only partially configured"):
+        _settings(**config)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://res.openai.azure.com/openai/v1",
+        "https://res.openai.azure.com/openai/v1/",
+        "https://res.services.ai.azure.com/openai/v1",
+    ],
+)
+def test_foundry_accepts_the_openai_v1_endpoint(url: str):
+    settings = _settings(**{**_FOUNDRY, "foundry_base_url": url}, llm_default_provider="foundry")
+    assert settings.foundry_base_url is not None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://res.services.ai.azure.com/api/projects/my-project",  # project endpoint
+        "https://res.openai.azure.com/",  # resource root (the older AzureOpenAI client form)
+        "https://res.openai.azure.com/openai/deployments/luna",
+    ],
+)
+def test_foundry_rejects_urls_that_are_not_the_v1_endpoint(url: str):
+    with pytest.raises(ValidationError, match="must end with /openai/v1"):
+        _settings(**{**_FOUNDRY, "foundry_base_url": url}, llm_default_provider="foundry")
+
+
+def test_foundry_reasoning_effort_is_validated():
+    with pytest.raises(ValidationError, match="foundry_reasoning_effort"):
+        _settings(**_FOUNDRY, llm_default_provider="foundry", foundry_reasoning_effort="extreme")
 
 
 def test_a_default_is_required_when_several_providers_are_enabled():
@@ -137,6 +193,9 @@ def test_secrets_never_appear_in_repr():
         gemini_model="m",
         anthropic_api_key="super-secret-a",
         anthropic_model="m",
+        foundry_base_url="https://res.openai.azure.com/openai/v1",
+        foundry_api_key="super-secret-f",
+        foundry_model="m",
         api_key="super-secret-inbound",
         llm_default_provider="ollama",
     )

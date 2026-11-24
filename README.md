@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 A provider-agnostic AI agent service. It answers a prompt by looping between an LLM
-(**Ollama**, **Gemini** or **Claude**) and the tools of an **MCP server**, and every step of
+(**Ollama**, **Gemini**, **Claude** or a model deployed in **Microsoft Foundry**) and the tools of an **MCP server**, and every step of
 the loop is traced end to end with **OpenTelemetry** (viewable in Jaeger).
 
 This repository is the long-lived home of the agent: RAG, new loop strategies, evals and
@@ -14,7 +14,7 @@ server, the RAG ingestion pipeline) lives in its own repository. See
 [ADR 0004](docs/adr/0004-evolution-strategy.md).
 
 ```
- client ──POST /v1/agent/runs──► RunAgent ──► ChatModel (Ollama | Gemini | Claude)
+ client ──POST /v1/agent/runs──► RunAgent ──► ChatModel (Ollama | Gemini | Claude | Foundry)
                                     │
                                     └────────► ToolGateway ──MCP/HTTP──► mcp-server
 ```
@@ -56,7 +56,7 @@ The reasoning is in [docs/adr](docs/adr).
 |---|---|---|
 | `src/domain` | Messages, tool calls, usage, budget, errors. Pure Python. | nothing |
 | `src/application` | The `RunAgent` loop, ports (`ChatModel`, `ToolGateway`...), sanitisation, GenAI tracing helpers | domain (+ `opentelemetry-api`, a documented exception) |
-| `src/infrastructure` | Ollama/Gemini/Claude adapters, retry and fallback, MCP client, health probes | domain, application |
+| `src/infrastructure` | Ollama/Gemini/Claude/Foundry adapters, retry and fallback, MCP client, health probes | domain, application |
 | `src/interface` | FastAPI routes, schemas, auth, error mapping | domain, application |
 | `config/` | Settings (`pydantic-settings`), logging profiles (`logging.json`), OpenTelemetry bootstrap | nothing in `src` |
 | `main.py` | **Composition root**: the only place that wires everything | everything |
@@ -76,6 +76,7 @@ alternatives considered and the consequences. In short:
 | [0004](docs/adr/0004-evolution-strategy.md) | One evolving agent repository; separate repositories per deployable (MCP server, RAG) | Changes across repositories (a new tool) need coordination, and evals must record both sides |
 | [0005](docs/adr/0005-evals.md) | A small in-repo eval harness with code-based graders, before any framework | Maintaining our own harness; in return the agent under test is the deployed one and every mechanism is visible |
 | [0006](docs/adr/0006-eval-results-in-phoenix.md) | Explore eval results in Arize Phoenix, published from saved reports | One more local service, and a source-available (not OSI) license for the server |
+| [0007](docs/adr/0007-microsoft-foundry-provider.md) | Microsoft Foundry through its OpenAI-compatible v1 endpoint with `ChatOpenAI`, Chat Completions, reasoning off by default | Not Microsoft's recommended `langchain-azure-ai` (pre-release dependencies), and no Responses API yet |
 
 ## Quick start
 
@@ -123,8 +124,13 @@ Paste `trace_id` into the Jaeger search to see the run. If `API_KEY` is set, add
 Everything is configured through environment variables (see [.env.example](.env.example)). Key points:
 
 - A provider is **enabled only when all its variables are set** (`OLLAMA_BASE_URL` + `OLLAMA_MODEL`,
-  `GEMINI_API_KEY` + `GEMINI_MODEL`, `ANTHROPIC_API_KEY` + `ANTHROPIC_MODEL`). A half-configured
-  provider is a startup error, not a silent skip.
+  `GEMINI_API_KEY` + `GEMINI_MODEL`, `ANTHROPIC_API_KEY` + `ANTHROPIC_MODEL`, `FOUNDRY_BASE_URL` +
+  `FOUNDRY_API_KEY` + `FOUNDRY_MODEL`). A half-configured provider is a startup error, not a
+  silent skip.
+- **Microsoft Foundry**: `FOUNDRY_BASE_URL` is the resource's OpenAI-compatible endpoint, ending
+  in `/openai/v1` (anything else is rejected at startup), and `FOUNDRY_MODEL` is the **deployment
+  name**. `FOUNDRY_REASONING_EFFORT` defaults to `none`; with reasoning on, the temperature is not
+  sent, because GPT-6 models reject it. See [ADR 0007](docs/adr/0007-microsoft-foundry-provider.md).
 - **No model names, hosts or URLs are hard-coded.** Model ids are yours to choose.
 - `LLM_DEFAULT_PROVIDER` is required when more than one provider is enabled.
 - `LLM_FALLBACKS={"anthropic": ["ollama"]}` makes a provider fall back to others when it is
@@ -240,8 +246,8 @@ Verified by automated tests: the loop and its stop conditions, sanitisation, err
 retry and fallback, MCP listing/calling and `traceparent` propagation against a real in-process
 server, the HTTP API, settings validation, and the dependency rule.
 
-**Not verified automatically** (needs your environment): calls to real Ollama/Gemini/Claude
-endpoints, the Docker build and run, the OTLP export to Jaeger, and whether each model family
+**Not verified automatically** (needs your environment): calls to real Ollama/Gemini/Claude/Foundry
+endpoints (the Foundry adapter is tested against a mock HTTP transport), the Docker build and run, the OTLP export to Jaeger, and whether each model family
 produces good tool calls (measure it with `make eval`).
 
 Not implemented yet: the roadmap below from step 2 on. Until rate limiting and request-body
@@ -256,8 +262,8 @@ tools, tracing) and `v0.2.0` (evals and tool design) are done.
 
 | # | Capability | What | Why at this point |
 |---|---|---|---|
-| 1 | **Evals and tool design** ✅ `v0.2.0` | Harness, dataset v6, baselines for Ollama and Gemini, six measured experiments ending with `search_tickets` in the mcp-server ([EXPERIMENTS.md](evals/EXPERIMENTS.md)); results explorable in Phoenix ([ADR 0006](docs/adr/0006-eval-results-in-phoenix.md)). Open: a Claude baseline, dataset v7 (a customer with several tickets) | Every later change is measured against this |
-| 2 | **Azure OpenAI provider** | A fourth `ChatModel` adapter, usable in `LLM_FALLBACKS` and measured in the eval baselines | The most common enterprise AI platform; the port makes it a small, contained change |
+| 1 | **Evals and tool design** ✅ `v0.2.0` | Harness, dataset v6, baselines for Ollama and Gemini, six measured experiments ending with `search_tickets` in the mcp-server ([EXPERIMENTS.md](evals/EXPERIMENTS.md)); results explorable in Phoenix ([ADR 0006](docs/adr/0006-eval-results-in-phoenix.md)). Open: a Claude baseline, dataset v8 (a customer with several tickets) | Every later change is measured against this |
+| 2 | **Azure OpenAI provider** (in progress) | A fourth `ChatModel` adapter for Microsoft Foundry ([ADR 0007](docs/adr/0007-microsoft-foundry-provider.md)), usable in `LLM_FALLBACKS`. Baseline E5: `gpt-6-luna` 75/75 at 4.8 s per run ([EXPERIMENTS.md](evals/EXPERIMENTS.md)). Open: a clean re-run on the commit, keyless auth with Entra ID | The most common enterprise AI platform; the port makes it a small, contained change |
 | 3 | **RAG** | Retrieval from the RAG services (their own repositories, with their own deployment lifecycle) exposed as a `search_knowledge_base` MCP tool; retrieval and answer evals (recall@k, faithfulness with an LLM judge) | Retrieval is a read-only tool on the existing path, so no architecture change. Documents are untrusted input: results go through the same sanitisation, and the injection eval cases cover them |
 | 4 | **Guardrails and security I** | Human confirmation for write tools (MCP elicitation), per-tool permissions, input/output guardrails (injection, PII), rate limiting, request size limits; checked against the OWASP Top 10 for LLM applications | The agent can already change data, and the safety eval cases show where models fail |
 | 5 | **LLM observability and cost** | Cost, latency and tokens per run as OpenTelemetry metrics; the existing spans already reach Phoenix through the collector (ADR 0006), so this step adds metrics, cost and online monitoring; provider prompt caching, measured | Caching, routing and budgets need these numbers |

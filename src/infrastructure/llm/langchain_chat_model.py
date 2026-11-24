@@ -1,7 +1,7 @@
 """Adapter that implements the ``ChatModel`` port on top of a LangChain chat model.
 
 LangChain's partner packages (``langchain-ollama``, ``langchain-google-genai``,
-``langchain-anthropic``) already normalise ``bind_tools``, ``tool_calls`` and
+``langchain-anthropic``, ``langchain-openai``) already normalise ``bind_tools``, ``tool_calls`` and
 ``usage_metadata``. This class converts between them and the domain types, so nothing
 outside ``infrastructure`` ever sees a LangChain object (see docs/adr/0002-llm-port.md).
 """

@@ -8,9 +8,14 @@ from typing import Annotated, Literal, Self
 from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-ProviderName = Literal["ollama", "gemini", "anthropic"]
-PROVIDER_NAMES: tuple[ProviderName, ...] = ("ollama", "gemini", "anthropic")
+ProviderName = Literal["ollama", "gemini", "anthropic", "foundry"]
+PROVIDER_NAMES: tuple[ProviderName, ...] = ("ollama", "gemini", "anthropic", "foundry")
 AppEnv = Literal["development", "test", "production"]
+# Values accepted by OpenAI reasoning models (GPT-6 family). "none" disables reasoning.
+ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
+
+# The OpenAI-compatible endpoint of a Microsoft Foundry resource ends with this path (ADR 0007).
+FOUNDRY_V1_PATH = "/openai/v1"
 
 DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful assistant that can call tools to look up and change business data.\n"
@@ -79,6 +84,12 @@ class Settings(BaseSettings):
     gemini_model: str | None = None
     anthropic_api_key: SecretStr | None = None
     anthropic_model: str | None = None
+    # Microsoft Foundry (Azure OpenAI v1 API): https://<resource>.openai.azure.com/openai/v1
+    foundry_base_url: AnyHttpUrl | None = None
+    foundry_api_key: SecretStr | None = None
+    foundry_model: str | None = None  # the deployment name, not the catalog model id
+    # "none" keeps temperature available and allows function tools on Chat Completions.
+    foundry_reasoning_effort: ReasoningEffort = "none"
 
     # --- MCP tool server ---------------------------------------------------------------
     mcp_server_url: AnyHttpUrl
@@ -100,6 +111,21 @@ class Settings(BaseSettings):
             return names or None
         return value
 
+    @field_validator("foundry_base_url")
+    @classmethod
+    def _require_foundry_v1_path(cls, value: AnyHttpUrl | None) -> AnyHttpUrl | None:
+        """Catch the usual mistake early: pasting the project or resource URL instead of the
+        OpenAI-compatible endpoint, which would only fail later with a 404 on every request."""
+        if value is None:
+            return None
+        path = (value.path or "").rstrip("/")
+        if not path.endswith(FOUNDRY_V1_PATH):
+            raise ValueError(
+                f"FOUNDRY_BASE_URL must end with {FOUNDRY_V1_PATH}, for example "
+                f"https://<resource>.openai.azure.com{FOUNDRY_V1_PATH}"
+            )
+        return value
+
     @property
     def enabled_providers(self) -> tuple[ProviderName, ...]:
         enabled: list[ProviderName] = []
@@ -109,6 +135,8 @@ class Settings(BaseSettings):
             enabled.append("gemini")
         if self.anthropic_api_key and self.anthropic_model:
             enabled.append("anthropic")
+        if self.foundry_base_url and self.foundry_api_key and self.foundry_model:
+            enabled.append("foundry")
         return tuple(enabled)
 
     @property
@@ -126,7 +154,8 @@ class Settings(BaseSettings):
         if not enabled:
             raise ValueError(
                 "No LLM provider is configured: set OLLAMA_BASE_URL and OLLAMA_MODEL, "
-                "GEMINI_API_KEY and GEMINI_MODEL, or ANTHROPIC_API_KEY and ANTHROPIC_MODEL"
+                "GEMINI_API_KEY and GEMINI_MODEL, ANTHROPIC_API_KEY and ANTHROPIC_MODEL, or "
+                "FOUNDRY_BASE_URL, FOUNDRY_API_KEY and FOUNDRY_MODEL"
             )
         if self.llm_default_provider is None and len(enabled) > 1:
             raise ValueError("LLM_DEFAULT_PROVIDER is required when several providers are enabled")
@@ -152,6 +181,7 @@ class Settings(BaseSettings):
             "ollama": (self.ollama_base_url, self.ollama_model),
             "gemini": (self.gemini_api_key, self.gemini_model),
             "anthropic": (self.anthropic_api_key, self.anthropic_model),
+            "foundry": (self.foundry_base_url, self.foundry_api_key, self.foundry_model),
         }
         for name, fields in groups.items():
             if any(fields) and not all(fields):

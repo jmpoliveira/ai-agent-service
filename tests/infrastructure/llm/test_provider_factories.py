@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import SecretStr
 
 from src.infrastructure.llm.claude_chat import create_claude_chat_model
+from src.infrastructure.llm.foundry_chat import create_foundry_chat_model
 from src.infrastructure.llm.gemini_chat import create_gemini_chat_model
 from src.infrastructure.llm.ollama_chat import create_ollama_chat_model
 
@@ -44,3 +45,16 @@ def test_claude_factory_builds_a_model_with_the_given_identity():
         temperature=0.0,
     )
     assert (model.provider, model.model) == ("anthropic", "claude-test")
+
+
+def test_foundry_factory_builds_a_model_with_the_deployment_as_identity():
+    model = create_foundry_chat_model(
+        base_url="https://res.openai.azure.com/openai/v1",
+        api_key=SecretStr("test-key"),
+        model="luna-deployment",
+        reasoning_effort="none",
+        timeout_seconds=5,
+        max_output_tokens=64,
+        temperature=0.0,
+    )
+    assert (model.provider, model.model) == ("foundry", "luna-deployment")

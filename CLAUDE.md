@@ -4,7 +4,7 @@ Guidance for Claude Code and other AI assistants working in this repository.
 
 ## What this is
 
-An AI agent service: `RunAgent` loops between an LLM (Ollama, Gemini or Claude, behind one
+An AI agent service: `RunAgent` loops between an LLM (Ollama, Gemini, Claude or Microsoft Foundry, behind one
 `ChatModel` port) and an MCP server (behind the `ToolGateway` port). Read `README.md` and
 `docs/adr/` before changing the architecture.
 
@@ -69,7 +69,7 @@ make cov          # coverage, fails under the minimum in pyproject.toml
 ## Tests
 
 - `pytest`, mirroring `src/` under `tests/`, Arrange-Act-Assert, runnable from the repo root.
-- Mock external services (Ollama, Gemini, Claude, MCP). The only real server in tests is the
+- Mock external services (Ollama, Gemini, Claude, Foundry, MCP). The only real server in tests is the
   tiny in-process FastMCP one in `tests/integration`.
 - Cover edge cases: empty input, oversized input, malformed provider output, missing settings.
 - Eval results are published to Phoenix through the `ResultSink` port (ADR 0006); only
