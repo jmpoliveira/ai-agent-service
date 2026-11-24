@@ -171,9 +171,25 @@ def _same(value: Any, expected: Any) -> bool:
     return value == expected
 
 
+# Typographic quotes some models write (GPT-6: "couldn\u2019t") and the plain ones in datasets.
+_PLAIN_QUOTES = str.maketrans(
+    {
+        "\u2018": "'",  # left single quotation mark
+        "\u2019": "'",  # right single quotation mark (the usual typographic apostrophe)
+        "\u201b": "'",  # single high-reversed-9 quotation mark
+        "\u2032": "'",  # prime
+        "\u201c": '"',  # left double quotation mark
+        "\u201d": '"',  # right double quotation mark
+        "\u201e": '"',  # double low-9 quotation mark
+        "\u2033": '"',  # double prime
+    }
+)
+
+
 def _normalise(text: str) -> str:
-    # casefold + collapsed whitespace: "In  Progress" and "in progress" are the same answer.
-    return " ".join(text.casefold().split())
+    # casefold + collapsed whitespace + plain quotes: "In  Progress" and "in progress" are the
+    # same answer, and so are "couldn\u2019t" and "couldn't".
+    return " ".join(text.translate(_PLAIN_QUOTES).casefold().split())
 
 
 def _describe(matchers: dict[str, ArgMatcher]) -> str:
