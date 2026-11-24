@@ -195,6 +195,10 @@ prompt to the failed check and its trace, and to compare runs case by case. How 
 extend them: [evals/README.md](evals/README.md); design: [ADR 0005](docs/adr/0005-evals.md),
 [ADR 0006](docs/adr/0006-eval-results-in-phoenix.md).
 
+The E4 baseline for `qwen3:8b` in Phoenix: every check passes on the first case, and each run opens its trace.
+
+![Phoenix comparison view of the tool_use v6 dataset: mean score per check for qwen3:8b, and one case with its expectation, tool calls and checks](docs/images/phoenix-eval-compare.png)
+
 ### What the evals changed
 
 Six experiments, one change at a time, each measured against the run before on two models
