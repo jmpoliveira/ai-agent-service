@@ -58,7 +58,7 @@ commit is written in the row by hand.
 | E3 | 2026-11-17 | Same (mcp-server `5b20ebc`, `--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 54/66 (81.8%), **54/54 outside the gap** | **100%** | 0% | **100%** | 10 s | 54 | **kept** |
 | E4 | 2026-11-17 | New `search_tickets` tool (mcp-server `ebf7cb2`) + dataset v6 (agent `04ed410`) | ollama / qwen3:8b | **75/75 (100%)** | 100% | **100%** | 100% | 142 s | 603 | **kept** |
 | E4 | 2026-11-17 | Same (`--max-rpm 12`) | gemini / gemini-3.5-flash-lite | 72/75 (96.0%); **72/72** of the runs that reached the model | 100% | 85.7% (100% without provider errors) | 100% | 16 s | 67 | **kept** |
-| E5 | 2026-11-24 | New provider: Microsoft Foundry, `FOUNDRY_REASONING_EFFORT=none`, temperature 0 (ADR 0007; first run before the commit, prompt `04126f5787d2`, `--max-rpm 30`) | foundry / gpt-6-luna (Data Zone Standard, EUR) | 63/75 on v6 as reported; 72/75 with the quote fix; 75/75 on v7, all real | 100% | 71.4% reported, 100% on v7 | 100% | 4.8 s | 62 | grader fix and v7 **kept** |
+| E5 | 2026-11-24 | New provider: Microsoft Foundry, `FOUNDRY_REASONING_EFFORT=none`, temperature 0 (ADR 0007; first run before the commit, prompt `04126f5787d2`, `--max-rpm 30`) | foundry / gpt-6-luna (Global Standard; corrected 2026-11-26, first recorded as Data Zone) | 63/75 on v6 as reported; 72/75 with the quote fix; 75/75 on v7, all real | 100% | 71.4% reported, 100% on v7 | 100% | 4.8 s | 62 | grader fix and v7 **kept** |
 | E5 | 2026-11-24 | Same, clean run on dataset v7 (commit `139b3dd`, `git_dirty: false`) | foundry / gpt-6-luna | **75/75 (100%)** | 100% | **100%** | 100% | **4.7 s** | 62 | **baseline** for Foundry |
 
 ### E1 notes: faster, but it guesses
@@ -334,7 +334,7 @@ Criteria set before reading the failures: behaviour checks (`tool_sequence`, `ar
   there is no thinking to pay for, and it never needed more than two tool calls.
 - **Cost, estimated:** about USD 0.0002 per run at the announced Global Standard price
   (0.10 / 0.50 per 1M input / output tokens), about 2 cents for the 75 runs. Not checked
-  against the Azure bill; the Data Zone price may differ.
+  against the Azure bill.
 - **The E4 blind spot does not show here.** `search_tickets` is called with `max_results=20`
   in 23 of 24 calls (10 once), never 1; it filters by `status="open"` for the two "open
   tickets" questions (6/6). For C-404 it calls `search_tickets` once, gets "Customer C-404 not

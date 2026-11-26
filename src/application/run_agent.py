@@ -53,6 +53,8 @@ class AgentConfig:
     max_tool_output_chars: int
     budget: AgentBudget
     tool_allowlist: frozenset[str] | None = None
+    # Stable id sent as gen_ai.agent.id on every span of a run; None leaves it out.
+    agent_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -98,7 +100,9 @@ class RunAgent:
         clean_prompt = sanitize_prompt(prompt, self._config.max_prompt_length)
         model = self._catalog.get(provider)
 
-        with invoke_agent_span(self._config.name, model.provider, model.model) as span:
+        with invoke_agent_span(
+            self._config.name, model.provider, model.model, self._config.agent_id
+        ) as span:
             logger.info(
                 "Agent run started",
                 extra={"provider": model.provider, "model": model.model},
@@ -193,7 +197,7 @@ class RunAgent:
         messages: Sequence[Message],
         specs: Sequence[ToolSpec],
     ) -> ChatResult:
-        with chat_span(model.provider, model.model) as span:
+        with chat_span(model.provider, model.model, self._config.agent_id) as span:
             result = await model.chat(messages, specs)
             record_chat_result(span, result)
             return result
@@ -204,7 +208,7 @@ class RunAgent:
         call: ToolCall,
         offered: frozenset[str],
     ) -> ToolResult:
-        with execute_tool_span(call) as span:
+        with execute_tool_span(call, self._config.agent_id) as span:
             # The model can hallucinate a tool name, or be steered towards a tool that
             # was filtered out. Only tools we offered may be called.
             if call.name not in offered:

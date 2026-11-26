@@ -270,3 +270,9 @@ def test_phoenix_publishing_is_off_unless_a_base_url_is_set(monkeypatch: pytest.
     assert configured.api_key is not None
     assert "phoenix-secret" not in repr(configured)
     assert unset.base_url is None
+
+
+@pytest.mark.parametrize("value", ["", "has space", "line\nbreak"])
+def test_agent_id_must_be_a_single_token(value: str):
+    with pytest.raises(ValidationError, match="agent_id"):
+        _settings(agent_id=value)

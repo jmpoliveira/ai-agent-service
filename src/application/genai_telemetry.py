@@ -38,6 +38,7 @@ ATTR_FINISH_REASONS = "gen_ai.response.finish_reasons"
 ATTR_INPUT_TOKENS = "gen_ai.usage.input_tokens"
 ATTR_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
 ATTR_AGENT_NAME = "gen_ai.agent.name"
+ATTR_AGENT_ID = "gen_ai.agent.id"
 ATTR_TOOL_NAME = "gen_ai.tool.name"
 ATTR_TOOL_CALL_ID = "gen_ai.tool.call.id"
 ATTR_TOOL_TYPE = "gen_ai.tool.type"
@@ -50,6 +51,13 @@ def provider_name(alias: str) -> str:
     return _PROVIDER_NAMES.get(alias, alias)
 
 
+def _agent_attributes(agent_id: str | None) -> dict[str, str]:
+    # gen_ai.agent.id on every span of a run lets a backend group them by agent: Microsoft
+    # Foundry lists an external agent's traces by matching it to the registered agent's
+    # OpenTelemetry id (see docs/adr/0007-microsoft-foundry-provider.md).
+    return {ATTR_AGENT_ID: agent_id} if agent_id else {}
+
+
 def current_trace_id() -> str | None:
     """Hex trace id of the active span, or None when there is no valid active span."""
     context = trace.get_current_span().get_span_context()
@@ -57,7 +65,9 @@ def current_trace_id() -> str | None:
 
 
 @contextmanager
-def invoke_agent_span(agent_name: str, provider: str, model: str) -> Generator[Span]:
+def invoke_agent_span(
+    agent_name: str, provider: str, model: str, agent_id: str | None = None
+) -> Generator[Span]:
     with _tracer.start_as_current_span(
         f"invoke_agent {agent_name}",
         kind=SpanKind.INTERNAL,
@@ -66,6 +76,7 @@ def invoke_agent_span(agent_name: str, provider: str, model: str) -> Generator[S
             ATTR_AGENT_NAME: agent_name,
             ATTR_PROVIDER: provider_name(provider),
             ATTR_REQUEST_MODEL: model,
+            **_agent_attributes(agent_id),
         },
     ) as span:
         yield span
@@ -79,7 +90,7 @@ def record_agent_run(span: Span, run: AgentRun) -> None:
 
 
 @contextmanager
-def chat_span(provider: str, model: str) -> Generator[Span]:
+def chat_span(provider: str, model: str, agent_id: str | None = None) -> Generator[Span]:
     with _tracer.start_as_current_span(
         f"chat {model}",
         kind=SpanKind.CLIENT,
@@ -87,6 +98,7 @@ def chat_span(provider: str, model: str) -> Generator[Span]:
             ATTR_OPERATION: "chat",
             ATTR_PROVIDER: provider_name(provider),
             ATTR_REQUEST_MODEL: model,
+            **_agent_attributes(agent_id),
         },
     ) as span:
         yield span
@@ -100,7 +112,7 @@ def record_chat_result(span: Span, result: ChatResult) -> None:
 
 
 @contextmanager
-def execute_tool_span(call: ToolCall) -> Generator[Span]:
+def execute_tool_span(call: ToolCall, agent_id: str | None = None) -> Generator[Span]:
     """Span around one tool call. Arguments and results are deliberately not recorded."""
     with _tracer.start_as_current_span(
         f"execute_tool {call.name}",
@@ -110,6 +122,7 @@ def execute_tool_span(call: ToolCall) -> Generator[Span]:
             ATTR_TOOL_NAME: call.name,
             ATTR_TOOL_CALL_ID: call.id,
             ATTR_TOOL_TYPE: "function",
+            **_agent_attributes(agent_id),
         },
     ) as span:
         yield span

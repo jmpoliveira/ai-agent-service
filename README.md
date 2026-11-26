@@ -6,7 +6,8 @@
 
 A provider-agnostic AI agent service. It answers a prompt by looping between an LLM
 (**Ollama**, **Gemini**, **Claude** or a model deployed in **Microsoft Foundry**) and the tools of an **MCP server**, and every step of
-the loop is traced end to end with **OpenTelemetry** (viewable in Jaeger).
+the loop is traced end to end with **OpenTelemetry** (viewable in Jaeger, Phoenix and, through
+Application Insights, Microsoft Foundry).
 
 This repository is the long-lived home of the agent: RAG, new loop strategies, evals and
 versioned prompts are added here over time. Anything with its own deployment lifecycle (the MCP
@@ -136,6 +137,9 @@ Everything is configured through environment variables (see [.env.example](.env.
 - `LLM_FALLBACKS={"anthropic": ["ollama"]}` makes a provider fall back to others when it is
   down or rate limited (never on authentication or validation errors, which would hide a bug).
 - `AGENT_TOOL_ALLOWLIST` limits which MCP tools the model can see and call.
+- `AGENT_ID` (default: `AGENT_NAME`) is sent as `gen_ai.agent.id` on every span of a run. To see
+  the traces in Microsoft Foundry, register the agent in the Foundry project as an external
+  agent and use this value as its OpenTelemetry ID ([ADR 0007](docs/adr/0007-microsoft-foundry-provider.md)).
 - `APP_ENV` (`development`, `test`, `production`) selects the logging profile; `production` also
   requires `API_KEY` and hides `/docs`. `LOG_LEVEL` optionally overrides the profile's level.
 - `LOG_LLM_CONTENT=true` (debugging only) logs the prompt, every model reply (text and tool calls
