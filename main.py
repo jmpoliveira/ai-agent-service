@@ -128,6 +128,7 @@ def build_run_agent(
             max_identical_tool_calls=settings.agent_max_identical_tool_calls,
         ),
         tool_allowlist=frozenset(allowlist) if allowlist else None,
+        agent_id=settings.agent_id or settings.agent_name,
     )
     conversation_log = (
         ConversationLogger(settings.log_llm_content_max_chars) if settings.log_llm_content else None

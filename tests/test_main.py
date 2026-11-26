@@ -139,6 +139,18 @@ def test_documentation_is_hidden_in_production():
         assert client.get("/docs").status_code == 404
 
 
+def test_agent_id_defaults_to_the_agent_name():
+    agent = build_run_agent(_settings())
+
+    assert agent._config.agent_id == "ai-agent-service"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_agent_id_can_be_set_apart_from_the_name():
+    agent = build_run_agent(_settings(agent_id="ai-agent-service-dev"))
+
+    assert agent._config.agent_id == "ai-agent-service-dev"  # pyright: ignore[reportPrivateUsage]
+
+
 def test_build_run_agent_reuses_given_models_and_tool_provider():
     # The evals pass already built models and a wrapped tool provider.
     models = build_chat_models(_settings())

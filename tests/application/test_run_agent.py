@@ -45,6 +45,7 @@ def _agent(
     provider: FakeToolGatewayProvider | None = None,
     max_tool_output_chars: int = 1000,
     conversation_log: ConversationLogger | None = None,
+    agent_id: str | None = None,
 ) -> tuple[RunAgent, ScriptedChatModel, FakeToolGateway]:
     model = ScriptedChatModel(script)
     fake_gateway = gateway or FakeToolGateway([tool_spec()])
@@ -55,6 +56,7 @@ def _agent(
         max_tool_output_chars=max_tool_output_chars,
         budget=budget or AgentBudget(5, 10_000, 5.0, 2),
         tool_allowlist=allowlist,
+        agent_id=agent_id,
     )
     agent = RunAgent(
         ModelCatalog({"fake": model}, default="fake"),
@@ -372,6 +374,36 @@ async def test_emits_agent_chat_and_tool_spans_in_one_trace(spans: InMemorySpanE
     assert tool.attributes is not None
     assert tool.attributes["gen_ai.tool.name"] == "search_customers"
     assert "gen_ai.tool.arguments" not in tool.attributes  # arguments are never recorded
+
+
+async def test_every_span_of_a_run_carries_the_agent_id(spans: InMemorySpanExporter):
+    # Arrange: Foundry groups an external agent's traces by gen_ai.agent.id.
+    agent, _, _ = _agent([reply(tool_calls=[SEARCH]), reply("done")], agent_id="agent-v1")
+
+    # Act
+    await agent.execute("go")
+
+    # Assert
+    finished = spans.get_finished_spans()
+    assert {s.name for s in finished} >= {
+        "invoke_agent test-agent",
+        "chat fake-model",
+        "execute_tool search_customers",
+    }
+    assert all(s.attributes and s.attributes.get("gen_ai.agent.id") == "agent-v1" for s in finished)
+
+
+async def test_without_an_agent_id_the_attribute_is_left_out(spans: InMemorySpanExporter):
+    # Arrange
+    agent, _, _ = _agent([reply("done")])
+
+    # Act
+    await agent.execute("go")
+
+    # Assert
+    root = span_by_name(spans, "invoke_agent test-agent")
+    assert root.attributes is not None
+    assert "gen_ai.agent.id" not in root.attributes
 
 
 async def test_a_failed_tool_marks_its_span_as_an_error(spans: InMemorySpanExporter):

@@ -57,6 +57,9 @@ class Settings(BaseSettings):
 
     # --- Agent -------------------------------------------------------------------------
     agent_name: str = "ai-agent-service"
+    # Sent as gen_ai.agent.id on the agent's spans; defaults to AGENT_NAME. Use it as the
+    # "OpenTelemetry ID" of the agent registered in Microsoft Foundry (ADR 0007).
+    agent_id: str | None = Field(default=None, min_length=1, pattern=r"^\S+$")
     agent_system_prompt: str = DEFAULT_SYSTEM_PROMPT
     agent_max_prompt_length: int = Field(default=4000, ge=1)
     agent_max_steps: int = Field(default=8, ge=1)

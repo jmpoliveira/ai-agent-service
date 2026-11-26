@@ -8,8 +8,10 @@ Roadmap step 2 adds an Azure-hosted provider, the most common enterprise AI plat
 deployed in a Microsoft Foundry resource are reached through the Azure OpenAI **v1 API**
 (`https://<resource>.openai.azure.com/openai/v1`, or the same path on `services.ai.azure.com`),
 which is OpenAI-compatible and needs no `api-version`. The first model is `gpt-6-luna` (the
-cheapest GPT-6 tier, with function calling), deployed as **Data Zone Standard (EUR)** so that
-processing stays in the EU.
+cheapest GPT-6 tier, with function calling). The deployment is **Global Standard**: requests may
+be processed in any Azure region. Moving it to Data Zone Standard (EU processing) is planned in
+the `azure-infra` repository (its ADR 0002), which manages the Foundry resources as code.
+(Corrected 2026-11-26: this ADR first said Data Zone Standard; the portal deployment was Global.)
 
 The agent's tasks are short tool-routing turns. The eval baselines show that small models already
 pass them when the tool descriptions are good, so a high-volume, low-cost model is the right
@@ -65,6 +67,25 @@ first choice; a larger tier is a configuration change measured with `make eval`.
   library): URL, Bearer header, payload (`reasoning_effort`, temperature rule,
   `max_completion_tokens`, tools), tool-call parsing, usage and error mapping. A live call is
   **not** part of the test suite.
+
+## Tracing in Foundry (added 2026-11-26)
+
+Traces reach Foundry through the shared OpenTelemetry collector (`docker-env`, optional
+Azure Monitor pipeline) and the Application Insights resource connected to the Foundry account
+(`azure-infra`). An agent that runs outside Foundry is listed once it is registered in the
+project as an **external agent** (name and OpenTelemetry ID). Microsoft's external-agent page says
+the spans must carry `gen_ai.agent.id` equal to that OpenTelemetry ID. Observed on 2026-11-26:
+registering `ai-agent-service` (name and ID) showed traces sent *before* the agent had
+`gen_ai.agent.id`, matched through `gen_ai.agent.name` on the `invoke_agent` span, which the
+Control Plane documentation mentions as a fallback.
+
+The agent sends `gen_ai.agent.id` anyway, on its `invoke_agent`, `chat` and `execute_tool` spans,
+from `AGENT_ID` (default: `AGENT_NAME`): it is the documented contract of a preview feature, it
+lets one agent name have several ids (for example one per environment, each registered
+separately), and it makes every span filterable by agent in Application Insights. The attribute
+belongs to the GenAI semantic conventions and describes the agent, so it is set in the
+application rather than added by the collector. Spans still carry no prompts, replies or tool
+arguments.
 
 ## Later
 
