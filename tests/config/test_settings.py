@@ -70,6 +70,50 @@ _FOUNDRY: dict[str, Any] = {
 }
 
 
+_FOUNDRY_ENTRA: dict[str, Any] = {
+    "foundry_base_url": "https://res.openai.azure.com/openai/v1",
+    "foundry_auth": "entra_id",
+    "foundry_model": "luna-deployment",
+}
+
+
+def test_foundry_with_entra_id_needs_no_key():
+    # Act
+    settings = _settings(**_FOUNDRY_ENTRA, llm_default_provider="foundry")
+
+    # Assert
+    assert "foundry" in settings.enabled_providers
+    assert settings.foundry_api_key is None
+    assert settings.foundry_token_scope == "https://ai.azure.com/.default"
+
+
+def test_foundry_auth_defaults_to_api_key():
+    assert _settings(**_FOUNDRY, llm_default_provider="foundry").foundry_auth == "api_key"
+
+
+def test_a_key_alongside_entra_id_is_refused():
+    with pytest.raises(ValidationError, match="FOUNDRY_API_KEY must not be set"):
+        _settings(**_FOUNDRY_ENTRA, foundry_api_key="f-key", llm_default_provider="foundry")
+
+
+@pytest.mark.parametrize("missing", ["foundry_base_url", "foundry_model"])
+def test_a_half_configured_entra_id_foundry_is_an_error(missing: str):
+    with pytest.raises(ValidationError, match="'foundry' is only partially configured"):
+        _settings(**{**_FOUNDRY_ENTRA, missing: None})
+
+
+def test_entra_id_alone_does_not_enable_foundry():
+    # FOUNDRY_AUTH=entra_id with no endpoint or deployment configures nothing.
+    settings = _settings(foundry_auth="entra_id")
+
+    assert "foundry" not in settings.enabled_providers
+
+
+def test_foundry_auth_is_validated():
+    with pytest.raises(ValidationError, match="foundry_auth"):
+        _settings(**_FOUNDRY, foundry_auth="managed_identity", llm_default_provider="foundry")
+
+
 def test_foundry_is_enabled_by_its_endpoint_key_and_deployment():
     # Act
     settings = _settings(**_FOUNDRY, llm_default_provider="foundry")

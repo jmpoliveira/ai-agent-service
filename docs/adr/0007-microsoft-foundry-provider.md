@@ -32,8 +32,9 @@ first choice; a larger tier is a configuration change measured with `make eval`.
    `none`, temperature 0 is accepted, the tool loop works on Chat Completions, and each step is
    faster and cheaper. Any other value is allowed, and the adapter then **omits** the
    temperature. The effort is recorded in each eval report, because it changes the results.
-4. **API key first, Microsoft Entra ID later.** The key is a `SecretStr` from the environment and
-   is sent as a Bearer token, which the v1 API accepts.
+4. **API key first, Microsoft Entra ID next.** The key is a `SecretStr` from the environment and
+   is sent as a Bearer token, which the v1 API accepts. Keyless authentication followed on
+   2026-11-26 (see "Keyless authentication" below).
 5. **Fail fast on the wrong URL.** `FOUNDRY_BASE_URL` must end with `/openai/v1`. Pasting the
    project endpoint (`/api/projects/<name>`) or the resource root is the usual mistake, and would
    otherwise show up only as a 404 on every request.
@@ -87,10 +88,54 @@ belongs to the GenAI semantic conventions and describes the agent, so it is set 
 application rather than added by the collector. Spans still carry no prompts, replies or tool
 arguments.
 
+## Keyless authentication (added 2026-11-26)
+
+`FOUNDRY_AUTH=entra_id` replaces the API key with Microsoft Entra ID tokens:
+
+- `azure-identity`'s `get_bearer_token_provider(DefaultAzureCredential(), FOUNDRY_TOKEN_SCOPE)`
+  is passed to `ChatOpenAI` as the key. The client calls it before each request; the provider
+  caches the token and refreshes it before it expires. The scope defaults to
+  `https://ai.azure.com/.default`, the one in Microsoft's v1 API examples.
+- **Synchronous credential.** langchain-openai runs a synchronous key provider in a worker
+  thread, so a refresh does not block the event loop, and the `aio` credential would add an
+  async HTTP stack (aiohttp) for no gain.
+- **`DefaultAzureCredential`**: the same code signs in with `az login` on a laptop, a service
+  principal from environment variables in CI, and a managed identity on Azure compute.
+- **Access is a role, not a secret**: the caller needs *Cognitive Services OpenAI User* on the
+  Foundry account (granted in the `azure-infra` repository). It allows inference only: no key
+  listing, no deployment changes. Calls are attributed to an identity in the Azure logs and can
+  be revoked per person.
+- **Errors**: a failed sign-in (no `az login`, no managed identity) is reported as an
+  authentication error, which the retry decorator does not retry. Without the adapter's
+  translation it would surface as an unclassified error.
+- **Fail fast**: `FOUNDRY_API_KEY` together with `FOUNDRY_AUTH=entra_id` is refused at startup,
+  so a key meant to be retired does not linger.
+- **Docker**: the container has no `az login`. It needs `FOUNDRY_AUTH=api_key`, a service
+  principal through `AZURE_CLIENT_ID`/`AZURE_TENANT_ID`/`AZURE_CLIENT_SECRET` (a secret again), or
+  a managed identity once it runs on Azure.
+
+**Verified live on 2026-11-27** (`FOUNDRY_AUTH=entra_id`, no key in the environment): the eval
+ran against `gpt-6-luna` and its traces reached Application Insights and Foundry. Signing in was
+the hard part, and is worth recording:
+
+- The tenant has Microsoft Entra **security defaults** on. The Azure CLI **device code flow**
+  (`az login --use-device-code`) from an unregistered device was refused with `AADSTS530035`
+  ("blocked by security defaults"), even after a successful MFA prompt, for the management scope
+  as well as for the AI Services scopes. `DefaultAzureCredential` reports it in its
+  `AzureCliCredential` entry; the agent turns it into an authentication error, so the eval stops
+  at the first case instead of retrying.
+- The **interactive browser flow** (`az login --tenant <id>`, with MFA) is accepted. In WSL it
+  needs a way to open the Windows browser with the full sign-in URL: `wslview` from the `wslu`
+  package and `BROWSER=wslview`. Without it, the URL the CLI prints has no query string and the
+  sign-in fails with `AADSTS900144` (missing `client_id`).
+- Security defaults stay on: turning them off would remove required MFA for the whole tenant to
+  save a developer one sign-in. The CLI session expires and asks for MFA again; when it does, the
+  agent reports the authentication error and `az login` fixes it.
+
+Once every client is keyless, the account can disable keys altogether (`disableLocalAuth` in
+`azure-infra`). Not yet: the Docker image of the agent and the planned embeddings adapter of
+`rag-ingestion-service` still use the key.
+
 ## Later
 
-- **Keyless authentication with Microsoft Entra ID**: `azure-identity`'s
-  `get_bearer_token_provider(DefaultAzureCredential(), "https://ai.azure.com/.default")` passed as
-  the API key (`ChatOpenAI` accepts a callable), role `Cognitive Services OpenAI User`. This
-  removes the long-lived key and fits the Entra ID work planned in Security II.
 - The Responses API, when a model that needs it is adopted (see above).
