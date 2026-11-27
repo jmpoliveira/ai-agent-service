@@ -25,6 +25,7 @@ dependencies = [
   "langchain-google-genai>=4.4,<5",
   "langchain-anthropic>=1.7,<2",
   "langchain-openai>=1.8,<2",  # Microsoft Foundry through its OpenAI-compatible v1 endpoint
+  "azure-identity>=1.27,<2",  # keyless Foundry authentication (Microsoft Entra ID)
   "ollama>=0.6,<1",
   "anthropic>=2.5,<3",
   "google-genai>=2.34,<3",

@@ -126,12 +126,14 @@ Everything is configured through environment variables (see [.env.example](.env.
 
 - A provider is **enabled only when all its variables are set** (`OLLAMA_BASE_URL` + `OLLAMA_MODEL`,
   `GEMINI_API_KEY` + `GEMINI_MODEL`, `ANTHROPIC_API_KEY` + `ANTHROPIC_MODEL`, `FOUNDRY_BASE_URL` +
-  `FOUNDRY_API_KEY` + `FOUNDRY_MODEL`). A half-configured provider is a startup error, not a
+  `FOUNDRY_MODEL` + `FOUNDRY_API_KEY`, the key unless `FOUNDRY_AUTH=entra_id`). A half-configured provider is a startup error, not a
   silent skip.
 - **Microsoft Foundry**: `FOUNDRY_BASE_URL` is the resource's OpenAI-compatible endpoint, ending
   in `/openai/v1` (anything else is rejected at startup), and `FOUNDRY_MODEL` is the **deployment
   name**. `FOUNDRY_REASONING_EFFORT` defaults to `none`; with reasoning on, the temperature is not
-  sent, because GPT-6 models reject it. See [ADR 0007](docs/adr/0007-microsoft-foundry-provider.md).
+  sent, because GPT-6 models reject it. `FOUNDRY_AUTH=entra_id` drops the API key and signs in with
+  Microsoft Entra ID (`az login` locally, a managed identity on Azure); the identity needs the
+  *Cognitive Services OpenAI User* role. See [ADR 0007](docs/adr/0007-microsoft-foundry-provider.md).
 - **No model names, hosts or URLs are hard-coded.** Model ids are yours to choose.
 - `LLM_DEFAULT_PROVIDER` is required when more than one provider is enabled.
 - `LLM_FALLBACKS={"anthropic": ["ollama"]}` makes a provider fall back to others when it is
@@ -267,7 +269,7 @@ tools, tracing) and `v0.2.0` (evals and tool design) are done.
 | # | Capability | What | Why at this point |
 |---|---|---|---|
 | 1 | **Evals and tool design** ✅ `v0.2.0` | Harness, dataset v6, baselines for Ollama and Gemini, six measured experiments ending with `search_tickets` in the mcp-server ([EXPERIMENTS.md](evals/EXPERIMENTS.md)); results explorable in Phoenix ([ADR 0006](docs/adr/0006-eval-results-in-phoenix.md)). Open: a Claude baseline, dataset v8 (a customer with several tickets) | Every later change is measured against this |
-| 2 | **Azure OpenAI provider** (in progress) | A fourth `ChatModel` adapter for Microsoft Foundry ([ADR 0007](docs/adr/0007-microsoft-foundry-provider.md)), usable in `LLM_FALLBACKS`. Baseline E5: `gpt-6-luna` 75/75 at 4.7 s per run ([EXPERIMENTS.md](evals/EXPERIMENTS.md)). Open: keyless auth with Entra ID | The most common enterprise AI platform; the port makes it a small, contained change |
+| 2 | **Azure OpenAI provider** ✅ | A fourth `ChatModel` adapter for Microsoft Foundry ([ADR 0007](docs/adr/0007-microsoft-foundry-provider.md)), usable in `LLM_FALLBACKS`, with API-key or keyless (Microsoft Entra ID) authentication. Baseline E5: `gpt-6-luna` 75/75 at 4.7 s per run ([EXPERIMENTS.md](evals/EXPERIMENTS.md)) | The most common enterprise AI platform; the port makes it a small, contained change |
 | 3 | **RAG** | Retrieval from the RAG services (their own repositories, with their own deployment lifecycle) exposed as a `search_knowledge_base` MCP tool; retrieval and answer evals (recall@k, faithfulness with an LLM judge) | Retrieval is a read-only tool on the existing path, so no architecture change. Documents are untrusted input: results go through the same sanitisation, and the injection eval cases cover them |
 | 4 | **Guardrails and security I** | Human confirmation for write tools (MCP elicitation), per-tool permissions, input/output guardrails (injection, PII), rate limiting, request size limits; checked against the OWASP Top 10 for LLM applications | The agent can already change data, and the safety eval cases show where models fail |
 | 5 | **LLM observability and cost** | Cost, latency and tokens per run as OpenTelemetry metrics; the existing spans already reach Phoenix through the collector (ADR 0006), so this step adds metrics, cost and online monitoring; provider prompt caching, measured | Caching, routing and budgets need these numbers |

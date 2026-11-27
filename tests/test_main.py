@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import main as main_module
 from config.settings import Settings
 from main import (
     build_chat_models,
@@ -137,6 +138,25 @@ def test_documentation_is_hidden_in_production():
 
     with TestClient(app) as client:
         assert client.get("/docs").status_code == 404
+
+
+def test_foundry_with_entra_id_gets_a_token_provider(monkeypatch: pytest.MonkeyPatch):
+    # Arrange: no Azure sign-in in tests; record what the composition root asks for.
+    scopes: list[str] = []
+
+    def fake_provider(scope: str) -> Any:
+        scopes.append(scope)
+        return lambda: "token"
+
+    monkeypatch.setattr(main_module, "entra_id_token_provider", fake_provider)
+    settings = _settings(foundry_auth="entra_id", foundry_api_key=None)
+
+    # Act
+    models = build_chat_models(settings)
+
+    # Assert
+    assert "foundry" in models
+    assert scopes == ["https://ai.azure.com/.default"]
 
 
 def test_agent_id_defaults_to_the_agent_name():

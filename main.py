@@ -11,6 +11,7 @@ from collections.abc import Mapping
 
 import uvicorn
 from fastapi import FastAPI
+from pydantic import SecretStr
 
 from config.log_setup import configure_logging
 from config.settings import Settings, get_settings
@@ -22,7 +23,11 @@ from src.application.run_agent import AgentConfig, RunAgent
 from src.domain.agent import AgentBudget
 from src.infrastructure.health.http_check import HttpHealthCheck
 from src.infrastructure.llm.claude_chat import create_claude_chat_model
-from src.infrastructure.llm.foundry_chat import create_foundry_chat_model
+from src.infrastructure.llm.foundry_chat import (
+    TokenProvider,
+    create_foundry_chat_model,
+    entra_id_token_provider,
+)
 from src.infrastructure.llm.gemini_chat import create_gemini_chat_model
 from src.infrastructure.llm.ollama_chat import create_ollama_chat_model
 from src.infrastructure.llm.resilience import FallbackChatModel, RetryingChatModel, RetryPolicy
@@ -32,6 +37,15 @@ from src.interface.api.app import create_api
 logger = logging.getLogger(__name__)
 
 _OLLAMA_HEALTH_PATH = "/api/tags"  # part of the Ollama HTTP API, not configuration
+
+
+def _foundry_credential(settings: Settings) -> SecretStr | TokenProvider:
+    """The API key, or a Microsoft Entra ID token provider (keyless, ADR 0007)."""
+    if settings.foundry_auth == "entra_id":
+        return entra_id_token_provider(settings.foundry_token_scope)
+    if settings.foundry_api_key is None:  # excluded by Settings validation; kept for the type
+        raise ValueError("FOUNDRY_API_KEY is required when FOUNDRY_AUTH=api_key")
+    return settings.foundry_api_key
 
 
 def build_chat_models(settings: Settings) -> dict[str, ChatModel]:
@@ -66,10 +80,14 @@ def build_chat_models(settings: Settings) -> dict[str, ChatModel]:
             max_output_tokens=max_tokens,
             temperature=temperature,
         )
-    if settings.foundry_base_url and settings.foundry_api_key and settings.foundry_model:
+    if (
+        "foundry" in settings.enabled_providers
+        and settings.foundry_base_url
+        and settings.foundry_model
+    ):
         raw["foundry"] = create_foundry_chat_model(
             base_url=str(settings.foundry_base_url),
-            api_key=settings.foundry_api_key,
+            api_key=_foundry_credential(settings),
             model=settings.foundry_model,
             reasoning_effort=settings.foundry_reasoning_effort,
             timeout_seconds=timeout,

@@ -13,6 +13,8 @@ PROVIDER_NAMES: tuple[ProviderName, ...] = ("ollama", "gemini", "anthropic", "fo
 AppEnv = Literal["development", "test", "production"]
 # Values accepted by OpenAI reasoning models (GPT-6 family). "none" disables reasoning.
 ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh", "max"]
+# api_key: FOUNDRY_API_KEY. entra_id: Microsoft Entra ID tokens (keyless), see ADR 0007.
+FoundryAuth = Literal["api_key", "entra_id"]
 
 # The OpenAI-compatible endpoint of a Microsoft Foundry resource ends with this path (ADR 0007).
 FOUNDRY_V1_PATH = "/openai/v1"
@@ -89,7 +91,10 @@ class Settings(BaseSettings):
     anthropic_model: str | None = None
     # Microsoft Foundry (Azure OpenAI v1 API): https://<resource>.openai.azure.com/openai/v1
     foundry_base_url: AnyHttpUrl | None = None
-    foundry_api_key: SecretStr | None = None
+    foundry_auth: FoundryAuth = "api_key"
+    foundry_api_key: SecretStr | None = None  # only with FOUNDRY_AUTH=api_key
+    # Token audience for FOUNDRY_AUTH=entra_id, as in Microsoft's v1 API examples.
+    foundry_token_scope: str = Field(default="https://ai.azure.com/.default", min_length=1)
     foundry_model: str | None = None  # the deployment name, not the catalog model id
     # "none" keeps temperature available and allows function tools on Chat Completions.
     foundry_reasoning_effort: ReasoningEffort = "none"
@@ -138,9 +143,15 @@ class Settings(BaseSettings):
             enabled.append("gemini")
         if self.anthropic_api_key and self.anthropic_model:
             enabled.append("anthropic")
-        if self.foundry_base_url and self.foundry_api_key and self.foundry_model:
+        if self.foundry_base_url and self.foundry_model and self._foundry_credential_set:
             enabled.append("foundry")
         return tuple(enabled)
+
+    @property
+    def _foundry_credential_set(self) -> bool:
+        # With Entra ID the credential comes from the environment (az login, managed identity),
+        # so there is nothing to set here.
+        return self.foundry_auth == "entra_id" or self.foundry_api_key is not None
 
     @property
     def default_provider(self) -> ProviderName:
@@ -158,7 +169,7 @@ class Settings(BaseSettings):
             raise ValueError(
                 "No LLM provider is configured: set OLLAMA_BASE_URL and OLLAMA_MODEL, "
                 "GEMINI_API_KEY and GEMINI_MODEL, ANTHROPIC_API_KEY and ANTHROPIC_MODEL, or "
-                "FOUNDRY_BASE_URL, FOUNDRY_API_KEY and FOUNDRY_MODEL"
+                "FOUNDRY_BASE_URL and FOUNDRY_MODEL (with FOUNDRY_API_KEY or FOUNDRY_AUTH=entra_id)"
             )
         if self.llm_default_provider is None and len(enabled) > 1:
             raise ValueError("LLM_DEFAULT_PROVIDER is required when several providers are enabled")
@@ -180,15 +191,23 @@ class Settings(BaseSettings):
 
     def _reject_partial_provider_config(self) -> None:
         """A half-configured provider is almost always a typo: fail fast instead of ignoring it."""
-        groups = {
+        # With Entra ID, Foundry's credential comes from the environment, not from a setting.
+        foundry: tuple[object, ...] = (self.foundry_base_url, self.foundry_model)
+        if self.foundry_auth == "api_key":
+            foundry = (*foundry, self.foundry_api_key)
+        groups: dict[str, tuple[object, ...]] = {
             "ollama": (self.ollama_base_url, self.ollama_model),
             "gemini": (self.gemini_api_key, self.gemini_model),
             "anthropic": (self.anthropic_api_key, self.anthropic_model),
-            "foundry": (self.foundry_base_url, self.foundry_api_key, self.foundry_model),
+            "foundry": foundry,
         }
         for name, fields in groups.items():
             if any(fields) and not all(fields):
                 raise ValueError(f"Provider '{name}' is only partially configured")
+        if self.foundry_auth == "entra_id" and self.foundry_api_key is not None:
+            # Two credentials for one provider: refuse rather than guess which one is meant,
+            # and keep a key that should be retired from lingering in the environment.
+            raise ValueError("FOUNDRY_API_KEY must not be set when FOUNDRY_AUTH=entra_id")
 
     @model_validator(mode="after")
     def _validate_security_and_telemetry(self) -> Self:

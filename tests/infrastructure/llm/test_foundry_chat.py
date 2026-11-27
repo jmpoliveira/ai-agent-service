@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx2
 import pytest
+from azure.core.exceptions import ClientAuthenticationError
 from pydantic import SecretStr
 
 from src.domain.errors import (
@@ -22,7 +23,12 @@ from src.domain.errors import (
 from src.domain.llm import FinishReason
 from src.domain.messages import Message, ToolCall
 from src.domain.tools import ToolResult, ToolSpec
-from src.infrastructure.llm.foundry_chat import create_foundry_chat_model
+from src.infrastructure.llm import foundry_chat
+from src.infrastructure.llm.foundry_chat import (
+    TokenProvider,
+    create_foundry_chat_model,
+    entra_id_token_provider,
+)
 from src.infrastructure.llm.langchain_chat_model import LangChainChatModel
 
 _BASE_URL = "https://res.openai.azure.com/openai/v1"
@@ -70,11 +76,16 @@ def _error(code: str) -> dict[str, Any]:
     return {"error": {"message": "upstream detail", "type": "invalid_request_error", "code": code}}
 
 
-def _model(handler: _Recorder, *, reasoning_effort: str = "none") -> LangChainChatModel:
+def _model(
+    handler: _Recorder,
+    *,
+    reasoning_effort: str = "none",
+    api_key: SecretStr | TokenProvider | None = None,
+) -> LangChainChatModel:
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     return create_foundry_chat_model(
         base_url=_BASE_URL,
-        api_key=SecretStr("test-key"),
+        api_key=api_key or SecretStr("test-key"),
         model="luna-deployment",
         reasoning_effort=reasoning_effort,
         timeout_seconds=5,
@@ -225,3 +236,60 @@ async def test_connection_failures_are_reported_as_unavailable():
     # Act / Assert
     with pytest.raises(LLMUnavailableError):
         await model.chat(_MESSAGES, [])
+
+
+# --- Microsoft Entra ID (keyless) ---------------------------------------------------------
+
+
+async def test_a_token_provider_is_sent_as_a_bearer_token_on_every_request():
+    # Arrange: the provider is asked before each request (it caches and refreshes tokens).
+    tokens = iter(["entra-token-1", "entra-token-2"])
+    handler = _Recorder(200, _completion({"role": "assistant", "content": "Hi"}))
+    model = _model(handler, api_key=lambda: next(tokens))
+
+    # Act
+    await model.chat(_MESSAGES, [])
+    await model.chat(_MESSAGES, [])
+
+    # Assert
+    sent = [r.headers["authorization"] for r in handler.requests]
+    assert sent == ["Bearer entra-token-1", "Bearer entra-token-2"]
+
+
+async def test_a_failed_sign_in_is_an_auth_error_and_sends_nothing():
+    # Arrange: what DefaultAzureCredential raises without az login or a managed identity.
+    def no_credential() -> str:
+        raise ClientAuthenticationError("DefaultAzureCredential failed to retrieve a token")
+
+    handler = _Recorder(200, _completion({"role": "assistant", "content": "Hi"}))
+
+    # Act / Assert: an auth error is a configuration problem, so it is not retried.
+    with pytest.raises(LLMAuthError):
+        await _model(handler, api_key=no_credential).chat(_MESSAGES, [])
+    assert handler.requests == []
+
+
+def test_entra_id_provider_asks_default_azure_credential_for_the_scope(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Arrange
+    seen: dict[str, object] = {}
+
+    class FakeCredential:
+        pass
+
+    def fake_provider(credential: object, *scopes: str) -> TokenProvider:
+        seen["credential"] = credential
+        seen["scopes"] = scopes
+        return lambda: "token"
+
+    monkeypatch.setattr(foundry_chat, "DefaultAzureCredential", FakeCredential)
+    monkeypatch.setattr(foundry_chat, "get_bearer_token_provider", fake_provider)
+
+    # Act
+    provider = entra_id_token_provider("https://ai.azure.com/.default")
+
+    # Assert
+    assert isinstance(seen["credential"], FakeCredential)
+    assert seen["scopes"] == ("https://ai.azure.com/.default",)
+    assert provider() == "token"
