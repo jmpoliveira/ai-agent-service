@@ -48,6 +48,16 @@ POST /v1/agent/runs                   (FastAPI HTTP span)
 In this run the two model calls take about 57 of the 57.3 seconds, while listing and calling the
 tools takes about 40 milliseconds: model latency, not tool access, is what to optimise.
 
+The same run shape in **Microsoft Foundry**, with `gpt-6-luna` instead of a local model. The agent
+runs outside Foundry; its spans reach Application Insights through the shared OpenTelemetry
+collector, and Foundry shows them for the registered external agent
+([ADR 0007](docs/adr/0007-microsoft-foundry-provider.md)). The spans carry the GenAI attributes
+(agent, provider, model, tokens), never prompts, replies or tool arguments:
+
+![Microsoft Foundry trace of one agent run with gpt-6-luna: invoke_agent with tool.list, two chat calls and execute_tool search_customers, the mcp-server spans nested under them, and the gen_ai attributes of the invoke_agent span (agent id and name, provider azure.ai.openai, model, input and output tokens)](docs/images/foundry-agent-trace.png)
+
+Seven spans, two model calls and one tool call in 3.2 seconds and about 1,600 tokens.
+
 ## Architecture
 
 Clean Architecture, with the agent loop made explicit instead of hidden in a generic service.
